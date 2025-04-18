@@ -10,7 +10,7 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 });
 
 // Set to track images we've already processed to avoid duplicates
-const processedImageSrcs = new Set();
+let processedImageSrcs = new Set();
 
 // Helper function to extract image details
 function extractImageMarkdown(imgElement) {
@@ -523,84 +523,263 @@ function extractMessages() {
   };
 }
 
-// Convert markdown to HTML
+// Convert markdown to HTML with improved LaTeX handling
 function convertMarkdownToHTML(markdown) {
-  // This is a simplified conversion - in a full extension, use a library like marked or showdown
+  // Create wrapper elements for HTML structure
+  const wrapMessage = (content, role) => {
+    return `<div class="${role}">${content}</div>`;
+  };
   
-  // Replace headings
-  let html = markdown
+  // Extract user and assistant messages
+  const parts = markdown.split(/^## (User|ChatGPT)\s*$/gm);
+  let html = '';
+  
+  // Process each message
+  for (let i = 1; i < parts.length; i += 2) {
+    if (i + 1 < parts.length) {
+      const role = parts[i].trim().toLowerCase();
+      const content = parts[i + 1].trim();
+      
+      // Parse the markdown content
+      let messageHtml = convertMessageContent(content);
+      
+      // Wrap the message in a div with the appropriate role class
+      html += wrapMessage(messageHtml, role === 'user' ? 'user' : 'assistant');
+    }
+  }
+  
+  // Create the complete HTML document
+  const htmlTemplate = createHtmlTemplate(html);
+  return htmlTemplate;
+}
+
+// Helper function to convert message content from markdown to HTML
+function convertMessageContent(content) {
+  // 1. Extract and temporarily replace code blocks and inline code with placeholders
+  let codeBlocks = [];
+  content = content.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, lang, code) => {
+    const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
+    codeBlocks.push({lang, code});
+    return placeholder;
+  });
+  
+  let inlineCodes = [];
+  content = content.replace(/`([^`]+)`/g, (match, code) => {
+    const placeholder = `INLINE_CODE_${inlineCodes.length}`;
+    inlineCodes.push(code);
+    return placeholder;
+  });
+  
+  // 2. Extract and temporarily replace LaTeX with placeholders
+  let latexDisplays = [];
+  content = content.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+    const placeholder = `LATEX_DISPLAY_${latexDisplays.length}`;
+    latexDisplays.push(latex);
+    return placeholder;
+  });
+  
+  let latexInlines = [];
+  // Use a more specific regex for inline LaTeX to avoid false positives
+  content = content.replace(/(?<!\$)\$([^\n$]+?)\$(?!\$)/g, (match, latex) => {
+    const placeholder = `LATEX_INLINE_${latexInlines.length}`;
+    latexInlines.push(latex);
+    return placeholder;
+  });
+  
+  // 3. Process regular markdown to HTML
+  let html = content
+    // Replace headings
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
     .replace(/^##### (.+)$/gm, '<h5>$1</h5>')
     .replace(/^###### (.+)$/gm, '<h6>$1</h6>');
-    
-  // Replace images
-  html = html.replace(/!\[(.*?)\]\((.*?)\)( *<!-- .*? -->)?/g, '<img src="$2" alt="$1" style="max-width:100%">');
+  
+  // Replace images with clean src to avoid ${src} errors
+  html = html.replace(/!\[(.*?)\]\((.*?)\)( *<!-- .*? -->)?/g, (match, alt, src) => {
+    const cleanSrc = src.replace(/\${.*?}/g, '');
+    return `<img src="${cleanSrc}" alt="${alt}" style="max-width:100%">`;
+  });
   
   // Replace links
-  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
+  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
   
   // Replace emphasis
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
   
-  // Replace inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  
-  // Replace code blocks
-  html = html.replace(/```(\w*)\n([\s\S]*?)\n```/g, '<pre><code class="language-$1">$2</code></pre>');
-  
-  // Handle inline code blocks with language specification like `python|print("Hello")`
-  html = html.replace(/`(\w+)\|(.*?)`/g, '<code class="language-$1">$2</code>');
-  
-  // Replace lists
+  // Handle lists
   let inList = false;
+  let listType = '';
   const lines = html.split('\n');
+  
   for (let i = 0; i < lines.length; i++) {
     // Unordered lists
     if (lines[i].match(/^- (.+)$/)) {
       if (!inList) {
         lines[i] = '<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
-        inList = 'ul';
-      } else if (inList === 'ul') {
+        inList = true;
+        listType = 'ul';
+      } else if (listType === 'ul') {
         lines[i] = '<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
       } else {
         lines[i] = '</ol>\n<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
-        inList = 'ul';
+        listType = 'ul';
       }
     }
     // Ordered lists
     else if (lines[i].match(/^\d+\. (.+)$/)) {
       if (!inList) {
         lines[i] = '<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
-        inList = 'ol';
-      } else if (inList === 'ol') {
+        inList = true;
+        listType = 'ol';
+      } else if (listType === 'ol') {
         lines[i] = '<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
       } else {
         lines[i] = '</ul>\n<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
-        inList = 'ol';
+        listType = 'ol';
       }
     }
     // End lists when encountering a non-list item
     else if (inList && lines[i].trim() !== '') {
-      lines[i] = (inList === 'ul' ? '</ul>' : '</ol>') + '\n' + lines[i];
+      lines[i] = (listType === 'ul' ? '</ul>' : '</ol>') + '\n' + lines[i];
       inList = false;
     }
   }
+  
+  // Close any remaining lists
   if (inList) {
-    lines.push(inList === 'ul' ? '</ul>' : '</ol>');
+    lines.push(listType === 'ul' ? '</ul>' : '</ol>');
   }
+  
   html = lines.join('\n');
   
   // Replace paragraphs (do this last to avoid messing up other elements)
   html = html.replace(/\n\n([^<].*?)\n\n/g, '\n<p>$1</p>\n');
   
-  // Replace leading newlines 
-  html = html.replace(/^\n+/, '');
+  // Clean any leftover newlines
+  html = html.replace(/\n\n+/g, '\n\n');
   
-  const htmlTemplate = `<!DOCTYPE html>
+  // 4. Restore code blocks with proper HTML and escaping
+  for (let i = 0; i < codeBlocks.length; i++) {
+    const {lang, code} = codeBlocks[i];
+    
+    // Escape HTML in code blocks for security
+    const escapedCode = code.replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    
+    // Only add language class if a language is specified
+    const langClass = lang ? `language-${lang}` : '';
+    
+    html = html.replace(
+      `CODE_BLOCK_${i}`, 
+      `<pre><code class="${langClass}">${escapedCode}</code></pre>`
+    );
+  }
+  
+  // Restore inline code with proper HTML and escaping
+  for (let i = 0; i < inlineCodes.length; i++) {
+    const escapedCode = inlineCodes[i].replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    
+    html = html.replace(`INLINE_CODE_${i}`, `<code>${escapedCode}</code>`);
+  }
+  
+  // 5. Restore LaTeX with special CSS classes for easy identification
+  for (let i = 0; i < latexDisplays.length; i++) {
+    let latex = latexDisplays[i];
+    
+    // Fix common LaTeX issues
+    latex = fixLatexSyntax(latex);
+    
+    html = html.replace(
+      `LATEX_DISPLAY_${i}`, 
+      `<div class="math-display" data-latex-original="${escapeHtml(latex)}">\\[${latex}\\]</div>`
+    );
+  }
+  
+  for (let i = 0; i < latexInlines.length; i++) {
+    let latex = latexInlines[i];
+    
+    // Fix common LaTeX issues
+    latex = fixLatexSyntax(latex);
+    
+    html = html.replace(
+      `LATEX_INLINE_${i}`, 
+      `<span class="math-inline" data-latex-original="${escapeHtml(latex)}">\\(${latex}\\)</span>`
+    );
+  }
+  
+  return html;
+}
+
+// Helper function to fix common LaTeX syntax issues
+function fixLatexSyntax(latex) {
+  // Fix unmatched \left and \right
+  let fixed = latex;
+  
+  // Count opening and closing delimiters
+  const leftCount = (fixed.match(/\\left/g) || []).length;
+  const rightCount = (fixed.match(/\\right/g) || []).length;
+  
+  // Fix unmatched \left
+  if (leftCount > rightCount) {
+    for (let i = 0; i < leftCount - rightCount; i++) {
+      fixed += ' \\right.';
+    }
+  }
+  
+  // Fix unmatched \right
+  if (rightCount > leftCount) {
+    fixed = '\\left. ' + fixed;
+  }
+  
+  // Fix common vector notation
+  fixed = fixed.replace(/\\vec\s*([a-zA-Z])\b(?![{])/g, '\\vec{$1}');
+  
+  // Fix common \frac syntax
+  fixed = fixed.replace(/\\frac\s*([a-zA-Z0-9]+)\s*([a-zA-Z0-9]+)/g, '\\frac{$1}{$2}');
+  
+  // Balance braces
+  let openBraces = 0;
+  for (let i = 0; i < fixed.length; i++) {
+    if (fixed[i] === '{') openBraces++;
+    if (fixed[i] === '}') openBraces--;
+  }
+  
+  // Add missing closing braces
+  if (openBraces > 0) {
+    fixed += '}'.repeat(openBraces);
+  }
+  
+  // Add missing opening braces
+  if (openBraces < 0) {
+    fixed = '{'.repeat(-openBraces) + fixed;
+  }
+  
+  return fixed;
+}
+
+// Helper function to escape HTML for attributes
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Function to create the complete HTML template
+function createHtmlTemplate(content) {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -611,17 +790,39 @@ function convertMarkdownToHTML(markdown) {
   <script>
   window.MathJax = {
     tex: {
-      inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-      displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+      inlineMath: [['\\\\(', '\\\\)']],
+      displayMath: [['\\\\[', '\\\\]']],
       processEscapes: true,
-      processEnvironments: true
+      processEnvironments: true,
+      macros: {
+        // Define some helpful macros for common LaTeX commands
+        vec: ["\\\\mathbf{#1}", 1],  // Simplified vector macro without \boldsymbol
+        ket: ["\\\\left| #1 \\\\right\\\\rangle", 1],
+        bra: ["\\\\left\\\\langle #1 \\\\right|", 1]
+      },
+      packages: {
+        '[+]': ['ams', 'bm', 'color', 'noerrors', 'physics']
+      }
     },
-    svg: {
-      fontCache: 'global'
+    chtml: {  // Use CommonHTML output for sharper text
+      fontCache: 'global',
+      scale: 1.2,  // Slightly larger scale for better readability
+      minScale: 0.5  // Allow small scale for inline equations
+    },
+    options: {
+      // Be more tolerant of errors in LaTeX
+      ignoreDuplicateLabels: true,
+      throwOnError: false  // Continue processing even with errors
+    },
+    startup: {
+      ready: function() {
+        MathJax.startup.defaultReady();
+        console.log('MathJax ready');
+      }
     }
   };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   
   <!-- Syntax highlighting -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
@@ -716,8 +917,50 @@ function convertMarkdownToHTML(markdown) {
     }
     
     /* LaTeX rendering improvements */
-    .mjx-math {
-      margin: 0 0.2em;
+    .math-display {
+      text-align: center;
+      margin: 1em 0;
+      overflow-x: auto;
+      padding: 8px;
+      border-radius: 4px;
+      background-color: rgba(0, 0, 0, 0.02);
+    }
+    
+    .math-inline {
+      display: inline-block;
+      margin: 0 0.15em;
+    }
+    
+    /* Style the MathJax output for better appearance */
+    .MathJax {
+      font-size: 115% !important;
+    }
+    
+    /* Improve equation display */
+    mjx-container {
+      overflow-x: auto;
+      overflow-y: hidden;
+      max-width: 100%;
+      padding: 2px 0;
+    }
+    
+    /* Add a debug viewer for LaTeX (hidden by default) */
+    .latex-debug {
+      display: none;
+      padding: 8px;
+      margin-top: 4px;
+      background-color: #ffe;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+    
+    /* Show debug info when hovering over LaTeX elements */
+    .math-display:hover .latex-debug,
+    .math-inline:hover .latex-debug {
+      display: block;
     }
     
     /* Dark mode support */
@@ -758,6 +1001,16 @@ function convertMarkdownToHTML(markdown) {
         border-top-color: #21262d;
         color: #8b949e;
       }
+      
+      .math-display {
+        background-color: rgba(255, 255, 255, 0.05);
+      }
+      
+      .latex-debug {
+        background-color: #2d2d1e;
+        border-color: #444;
+        color: #ddd;
+      }
     }
   </style>
 </head>
@@ -765,29 +1018,80 @@ function convertMarkdownToHTML(markdown) {
   <h1>ChatGPT Conversation</h1>
   <p>Exported on: ${new Date().toLocaleString()}</p>
   
-  ${html}
+  <div class="conversation-container">
+    ${content}
+  </div>
   
   <div class="footer">
     <p>Exported with ChatGPT Export Tool • ${new Date().toISOString().split('T')[0]}</p>
   </div>
 
   <script>
-    // Initialize syntax highlighting
-    document.addEventListener('DOMContentLoaded', () => {
-      document.querySelectorAll('pre code').forEach((block) => {
+    // Initialize syntax highlighting and handle typesetting
+    document.addEventListener('DOMContentLoaded', function() {
+      // Apply syntax highlighting only to code elements with a language class
+      document.querySelectorAll('pre code[class^="language-"]').forEach(function(block) {
         hljs.highlightElement(block);
       });
       
-      // Also highlight inline code blocks with language specification
-      document.querySelectorAll('code[class^="language-"]').forEach((el) => {
-        hljs.highlightElement(el);
+      // Add debug info to LaTeX elements
+      document.querySelectorAll('.math-display, .math-inline').forEach(function(el) {
+        // Get the original LaTeX from data attribute
+        const original = el.getAttribute('data-latex-original');
+        if (original) {
+          // Create a debug element that shows the original LaTeX
+          const debug = document.createElement('div');
+          debug.className = 'latex-debug';
+          debug.textContent = original;
+          el.appendChild(debug);
+        }
       });
+      
+      // Wait for MathJax to be fully loaded
+      function checkMathJax() {
+        if (typeof MathJax !== 'undefined' && MathJax.typeset) {
+          console.log('Triggering MathJax typesetting...');
+          try {
+            MathJax.typeset();
+            
+            // Add debug info to any LaTeX elements that had errors
+            document.querySelectorAll('.mjx-math').forEach(function(mathEl) {
+              const parentEl = mathEl.closest('.math-display, .math-inline');
+              if (parentEl && !parentEl.querySelector('.latex-debug')) {
+                const original = parentEl.getAttribute('data-latex-original');
+                if (original) {
+                  const debug = document.createElement('div');
+                  debug.className = 'latex-debug';
+                  debug.textContent = original;
+                  parentEl.appendChild(debug);
+                }
+              }
+            });
+            
+            // Run MathJax a second time after a delay to catch anything that might have been missed
+            setTimeout(function() {
+              try {
+                MathJax.typeset();
+                console.log('Final MathJax typesetting complete');
+              } catch (e) {
+                console.error('Final MathJax typesetting error:', e);
+              }
+            }, 2000);
+          } catch (e) {
+            console.error('MathJax typesetting error:', e);
+          }
+        } else {
+          console.log('Waiting for MathJax to load...');
+          setTimeout(checkMathJax, 500);
+        }
+      }
+      
+      // Start checking for MathJax
+      checkMathJax();
     });
   </script>
 </body>
 </html>`;
-
-  return htmlTemplate;
 }
 
 // Function to export the current conversation
@@ -816,7 +1120,36 @@ function exportCurrentConversation(formats, sendResponse) {
     
     messages.forEach(message => {
       const roleTitle = message.role === 'user' ? 'User' : 'ChatGPT';
-      markdown += `## ${roleTitle}\n\n${message.content}\n\n`;
+      
+      // Protect code blocks and inline code from LaTeX processing
+      let content = message.content;
+      
+      // First, temporarily mark code blocks to prevent modifying them
+      let codeBlocks = [];
+      content = content.replace(/```[\s\S]*?```/g, (match) => {
+        const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
+        codeBlocks.push(match);
+        return placeholder;
+      });
+      
+      // Now mark inline code to protect it as well
+      let inlineCodes = [];
+      content = content.replace(/`[^`]+`/g, (match) => {
+        const placeholder = `INLINE_CODE_${inlineCodes.length}`;
+        inlineCodes.push(match);
+        return placeholder;
+      });
+      
+      // Now restore all code blocks and inline codes
+      codeBlocks.forEach((block, i) => {
+        content = content.replace(`CODE_BLOCK_${i}`, block);
+      });
+      
+      inlineCodes.forEach((code, i) => {
+        content = content.replace(`INLINE_CODE_${i}`, code);
+      });
+      
+      markdown += `## ${roleTitle}\n\n${content}\n\n`;
     });
     
     console.log('Generated markdown content:', markdown.substring(0, 100) + '...');
