@@ -552,6 +552,9 @@ function convertMarkdownToHTML(markdown) {
   // Replace code blocks
   html = html.replace(/```(\w*)\n([\s\S]*?)\n```/g, '<pre><code class="language-$1">$2</code></pre>');
   
+  // Handle inline code blocks with language specification like `python|print("Hello")`
+  html = html.replace(/`(\w+)\|(.*?)`/g, '<code class="language-$1">$2</code>');
+  
   // Replace lists
   let inList = false;
   const lines = html.split('\n');
@@ -597,40 +600,32 @@ function convertMarkdownToHTML(markdown) {
   // Replace leading newlines 
   html = html.replace(/^\n+/, '');
   
-  // Add styling and MathJax for LaTeX rendering
-  return `<!DOCTYPE html>
-<html>
+  const htmlTemplate = `<!DOCTYPE html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ChatGPT Conversation</title>
   
   <!-- MathJax for LaTeX rendering -->
-  <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script>
-    window.MathJax = {
-      tex: {
-        inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-        displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
-        processEscapes: true
-      },
-      svg: {
-        fontCache: 'global'
-      }
-    };
+  window.MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+      displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+      processEscapes: true,
+      processEnvironments: true
+    },
+    svg: {
+      fontCache: 'global'
+    }
+  };
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
   
-  <!-- Syntax highlighting for code -->
+  <!-- Syntax highlighting -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
-  <script>
-    document.addEventListener('DOMContentLoaded', (event) => {
-      document.querySelectorAll('pre code').forEach((el) => {
-        hljs.highlightElement(el);
-      });
-    });
-  </script>
   
   <style>
     body {
@@ -641,19 +636,23 @@ function convertMarkdownToHTML(markdown) {
       padding: 20px;
       color: #24292e;
     }
+    
     .user, .assistant {
       padding: 15px;
       margin-bottom: 20px;
       border-radius: 10px;
     }
+    
     .user {
       background-color: #f6f8fa;
       border-left: 4px solid #0366d6;
     }
+    
     .assistant {
       background-color: #f1f8ff;
       border-left: 4px solid #28a745;
     }
+    
     img {
       max-width: 100%;
       height: auto;
@@ -661,6 +660,7 @@ function convertMarkdownToHTML(markdown) {
       margin: 10px 0;
       border: 1px solid #e1e4e8;
     }
+    
     pre {
       background-color: #f6f8fa;
       padding: 16px;
@@ -668,6 +668,7 @@ function convertMarkdownToHTML(markdown) {
       overflow-x: auto;
       margin: 16px 0;
     }
+    
     code {
       font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
       font-size: 85%;
@@ -675,16 +676,19 @@ function convertMarkdownToHTML(markdown) {
       background-color: rgba(27, 31, 35, 0.05);
       border-radius: 3px;
     }
+    
     pre code {
       padding: 0;
       background-color: transparent;
     }
+    
     h1 {
       font-size: 2em;
       margin-top: 24px;
       border-bottom: 1px solid #eaecef;
       padding-bottom: 0.3em;
     }
+    
     h2 {
       font-size: 1.5em;
       color: #24292e;
@@ -692,13 +696,16 @@ function convertMarkdownToHTML(markdown) {
       border-bottom: 1px solid #eaecef;
       padding-bottom: 0.3em;
     }
+    
     a {
       color: #0366d6;
       text-decoration: none;
     }
+    
     a:hover {
       text-decoration: underline;
     }
+    
     .footer {
       margin-top: 40px;
       padding-top: 20px;
@@ -706,6 +713,51 @@ function convertMarkdownToHTML(markdown) {
       color: #586069;
       font-size: 12px;
       text-align: center;
+    }
+    
+    /* LaTeX rendering improvements */
+    .mjx-math {
+      margin: 0 0.2em;
+    }
+    
+    /* Dark mode support */
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #0d1117;
+        color: #c9d1d9;
+      }
+      
+      .user {
+        background-color: #161b22;
+        border-left-color: #58a6ff;
+      }
+      
+      .assistant {
+        background-color: #0d1117;
+        border-left-color: #2ea043;
+      }
+      
+      pre {
+        background-color: #161b22;
+      }
+      
+      code {
+        background-color: rgba(240, 246, 252, 0.15);
+      }
+      
+      a {
+        color: #58a6ff;
+      }
+      
+      h2 {
+        color: #c9d1d9;
+        border-bottom-color: #21262d;
+      }
+      
+      .footer {
+        border-top-color: #21262d;
+        color: #8b949e;
+      }
     }
   </style>
 </head>
@@ -718,34 +770,24 @@ function convertMarkdownToHTML(markdown) {
   <div class="footer">
     <p>Exported with ChatGPT Export Tool • ${new Date().toISOString().split('T')[0]}</p>
   </div>
-  
+
   <script>
-    // Process any code blocks with highlighting
+    // Initialize syntax highlighting
     document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('pre code').forEach((block) => {
         hljs.highlightElement(block);
+      });
+      
+      // Also highlight inline code blocks with language specification
+      document.querySelectorAll('code[class^="language-"]').forEach((el) => {
+        hljs.highlightElement(el);
       });
     });
   </script>
 </body>
 </html>`;
-}
 
-// Pack downloaded images and files into a zip file
-async function downloadZip(files, zipName) {
-  // In a real extension, use JSZip or similar library
-  // For this example, we're just going to highlight that this would be implemented
-  // in the final version
-  console.log(`Would create zip file ${zipName} with ${files.length} files`);
-  files.forEach(file => {
-    console.log(`  - ${file.path}: ${file.content.substring(0, 30)}...`);
-  });
-  
-  // In a real implementation we would create a zip file and trigger download
-  return {
-    success: true,
-    message: `Created ${files.length} files in zip`
-  };
+  return htmlTemplate;
 }
 
 // Function to export the current conversation
