@@ -655,11 +655,8 @@ function convertMessageContent(content) {
   
   html = lines.join('\n');
   
-  // Replace paragraphs (do this last to avoid messing up other elements)
-  html = html.replace(/\n\n([^<].*?)\n\n/g, '\n<p>$1</p>\n');
-  
-  // Clean any leftover newlines
-  html = html.replace(/\n\n+/g, '\n\n');
+  // Now we restore code blocks BEFORE paragraph replacements to avoid wrapping
+  // code blocks in <p> tags
   
   // 4. Restore code blocks with proper HTML and escaping
   for (let i = 0; i < codeBlocks.length; i++) {
@@ -675,9 +672,13 @@ function convertMessageContent(content) {
     // Only add language class if a language is specified
     const langClass = lang ? `language-${lang}` : '';
     
+    // Create a pretty language label for the UI
+    const displayLang = lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : 'Plain text';
+    
+    // Create the code block with a language attribute for the label
     html = html.replace(
       `CODE_BLOCK_${i}`, 
-      `<pre><code class="${langClass}">${escapedCode}</code></pre>`
+      `<pre data-language="${displayLang}"><code class="${langClass}">${escapedCode}</code></pre>`
     );
   }
   
@@ -691,6 +692,13 @@ function convertMessageContent(content) {
     
     html = html.replace(`INLINE_CODE_${i}`, `<code>${escapedCode}</code>`);
   }
+  
+  // NOW do paragraph replacements AFTER code blocks are restored
+  // Replace paragraphs (do this last to avoid messing up other elements)
+  html = html.replace(/\n\n([^<].*?)\n\n/g, '\n<p>$1</p>\n');
+  
+  // Clean any leftover newlines
+  html = html.replace(/\n\n+/g, '\n\n');
   
   // 5. Restore LaTeX with special CSS classes for easy identification
   for (let i = 0; i < latexDisplays.length; i++) {
@@ -824,9 +832,24 @@ function createHtmlTemplate(content) {
   </script>
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   
-  <!-- Syntax highlighting -->
+  <!-- Syntax highlighting with common language support -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+  <!-- Common language packs for better code highlighting -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/typescript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/cpp.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/csharp.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/java.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/go.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/rust.min.js"></script>
   
   <style>
     body {
@@ -868,6 +891,22 @@ function createHtmlTemplate(content) {
       border-radius: 6px;
       overflow-x: auto;
       margin: 16px 0;
+      position: relative;
+    }
+    
+    /* Add language label to code blocks */
+    pre::before {
+      content: attr(data-language);
+      position: absolute;
+      top: 0;
+      right: 0;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #6a737d;
+      background-color: rgba(246, 248, 250, 0.9);
+      border-radius: 0 6px;
+      border-left: 1px solid #e1e4e8;
+      border-bottom: 1px solid #e1e4e8;
     }
     
     code {
@@ -878,9 +917,56 @@ function createHtmlTemplate(content) {
       border-radius: 3px;
     }
     
+    /* Style for inline code with language label */
+    .code-lang-wrapper {
+      position: relative;
+      display: inline-block;
+      margin: 0 0.2em;
+    }
+    
+    .code-lang-wrapper::after {
+      content: attr(data-lang);
+      position: absolute;
+      top: -0.7em;
+      right: -0.2em;
+      font-size: 0.7em;
+      padding: 0 0.3em;
+      background: #eff1f3;
+      border-radius: 3px;
+      color: #6a737d;
+      border: 1px solid #e1e4e8;
+      opacity: 0; /* Hidden by default */
+      transition: opacity 0.2s;
+    }
+    
+    .code-lang-wrapper:hover::after {
+      opacity: 1; /* Show on hover */
+    }
+    
     pre code {
       padding: 0;
       background-color: transparent;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    
+    /* Language-specific color tweaks */
+    .hljs-keyword {
+      color: #d73a49;
+      font-weight: bold;
+    }
+    
+    .hljs-string {
+      color: #032f62;
+    }
+    
+    .hljs-comment {
+      color: #6a737d;
+      font-style: italic;
+    }
+    
+    .hljs-function {
+      color: #6f42c1;
     }
     
     h1 {
@@ -984,8 +1070,39 @@ function createHtmlTemplate(content) {
         background-color: #161b22;
       }
       
+      pre::before {
+        color: #8b949e;
+        background-color: rgba(22, 27, 34, 0.9);
+        border-left: 1px solid #30363d;
+        border-bottom: 1px solid #30363d;
+      }
+      
       code {
         background-color: rgba(240, 246, 252, 0.15);
+      }
+      
+      /* Dark mode for inline code language labels */
+      .code-lang-wrapper::after {
+        background: #2d333b;
+        color: #adbac7;
+        border-color: #444c56;
+      }
+      
+      /* Dark mode syntax highlighting */
+      .hljs-keyword {
+        color: #ff7b72;
+      }
+      
+      .hljs-string {
+        color: #a5d6ff;
+      }
+      
+      .hljs-comment {
+        color: #8b949e;
+      }
+      
+      .hljs-function {
+        color: #d2a8ff;
       }
       
       a {
@@ -1029,9 +1146,51 @@ function createHtmlTemplate(content) {
   <script>
     // Initialize syntax highlighting and handle typesetting
     document.addEventListener('DOMContentLoaded', function() {
-      // Apply syntax highlighting only to code elements with a language class
-      document.querySelectorAll('pre code[class^="language-"]').forEach(function(block) {
-        hljs.highlightElement(block);
+      // Apply syntax highlighting to all code blocks
+      // This will attempt auto-detection for blocks without a language class
+      document.querySelectorAll('pre code').forEach(function(block) {
+        // For code blocks with a specific language
+        if (block.className.startsWith('language-')) {
+          // Get the language from the class
+          const lang = block.className.replace('language-', '');
+          // If lang is empty, do autodetection
+          if (lang) {
+            try {
+              hljs.highlightElement(block);
+            } catch (e) {
+              console.warn('Failed to highlight with specified language', e);
+              hljs.highlightAuto(block); // Fallback to auto detection
+            }
+          } else {
+            hljs.highlightAuto(block);
+          }
+        } else {
+          // For code blocks without a language class, use auto-detection
+          hljs.highlightAuto(block);
+        }
+      });
+      
+      // Also highlight inline code blocks with language specification
+      document.querySelectorAll('code[class^="language-"]').forEach(function(el) {
+        if (!el.closest('pre')) { // Only target inline code, not code blocks
+          try {
+            hljs.highlightElement(el);
+          } catch (e) {
+            console.warn('Failed to highlight inline code', e);
+          }
+          
+          // Add a subtle label to show the language
+          const lang = el.className.replace('language-', '');
+          if (lang) {
+            const wrapper = document.createElement('span');
+            wrapper.className = 'code-lang-wrapper';
+            wrapper.setAttribute('data-lang', lang.charAt(0).toUpperCase() + lang.slice(1));
+            
+            // Replace the element with the wrapped version
+            el.parentNode.insertBefore(wrapper, el);
+            wrapper.appendChild(el);
+          }
+        }
       });
       
       // Add debug info to LaTeX elements
