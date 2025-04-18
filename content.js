@@ -183,9 +183,18 @@ function processNode(node) {
         case 'PRE':
           // Code block
           const codeNode = node.querySelector('code');
-          const language = codeNode ? (codeNode.className.replace('language-', '') || '') : '';
+          let language = '';
+          // Improved language extraction: find the class starting with "language-"
+          if (codeNode && codeNode.className) {
+            const langClass = codeNode.className.split(' ').find(cls => cls.startsWith('language-'));
+            if (langClass) {
+              language = langClass.replace('language-', '');
+            }
+          }
           const code = codeNode ? codeNode.textContent : node.textContent;
-          return '```' + language + '\n' + code + '\n```\n\n';
+          // Ensure newline after language, handle potential empty language
+          const langPart = language ? language + '\n' : '\n'; 
+          return '```' + langPart + code + '\n```\n\n';
           
         case 'A':
           const href = node.getAttribute('href');
@@ -557,7 +566,7 @@ function convertMarkdownToHTML(markdown) {
 function convertMessageContent(content) {
   // 1. Extract and temporarily replace code blocks and inline code with placeholders
   let codeBlocks = [];
-  content = content.replace(/```(\w*)\n([\s\S]*?)\n```/g, (match, lang, code) => {
+  content = content.replace(/```([a-zA-Z0-9]*)\n([\s\S]*?)\n?```/g, (match, lang, code) => {
     const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
     codeBlocks.push({lang, code});
     return placeholder;
@@ -833,7 +842,6 @@ function createHtmlTemplate(content) {
   <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   
   <!-- Syntax highlighting with common language support -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
   <!-- Common language packs for better code highlighting -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/languages/python.min.js"></script>
@@ -950,7 +958,14 @@ function createHtmlTemplate(content) {
       line-height: 1.5;
     }
     
-    /* Language-specific color tweaks */
+    /* Custom syntax highlighting for both light and dark mode */
+    /* Light mode highlighting */
+    .hljs {
+      display: block;
+      color: #24292e;
+      background: #f6f8fa;
+    }
+    
     .hljs-keyword {
       color: #d73a49;
       font-weight: bold;
@@ -967,6 +982,22 @@ function createHtmlTemplate(content) {
     
     .hljs-function {
       color: #6f42c1;
+    }
+    
+    .hljs-number {
+      color: #005cc5;
+    }
+    
+    .hljs-attr {
+      color: #6f42c1;
+    }
+    
+    .hljs-name, .hljs-tag {
+      color: #22863a;
+    }
+    
+    .hljs-built_in {
+      color: #e36209;
     }
     
     h1 {
@@ -1065,9 +1096,21 @@ function createHtmlTemplate(content) {
         background-color: #0d1117;
         border-left-color: #2ea043;
       }
+
+      pre, pre.hljs, code.hljs { /* Target all code elements */
+        background-color: #161b22 !important; /* Ensure dark background persists */
+        color: #c9d1d9 !important;
+      }
       
       pre {
         background-color: #161b22;
+        border: 1px solid #30363d;
+      }
+      
+      /* Ensure code blocks maintain dark styling */
+      pre code {
+        background-color: transparent !important;
+        color: #c9d1d9 !important;
       }
       
       pre::before {
@@ -1088,21 +1131,42 @@ function createHtmlTemplate(content) {
         border-color: #444c56;
       }
       
-      /* Dark mode syntax highlighting */
+      /* Dark mode syntax highlighting - override light theme */
+      .hljs {
+        background-color: #161b22 !important;
+        color: #c9d1d9 !important;
+      }
+      
       .hljs-keyword {
-        color: #ff7b72;
+        color: #ff7b72 !important;
       }
       
       .hljs-string {
-        color: #a5d6ff;
+        color: #a5d6ff !important;
       }
       
       .hljs-comment {
-        color: #8b949e;
+        color: #8b949e !important;
       }
       
       .hljs-function {
-        color: #d2a8ff;
+        color: #d2a8ff !important;
+      }
+      
+      .hljs-number {
+        color: #79c0ff !important;
+      }
+      
+      .hljs-attr {
+        color: #d2a8ff !important;
+      }
+      
+      .hljs-name, .hljs-tag {
+        color: #7ee787 !important;
+      }
+      
+      .hljs-built_in {
+        color: #ffa657 !important;
       }
       
       a {
@@ -1146,6 +1210,26 @@ function createHtmlTemplate(content) {
   <script>
     // Initialize syntax highlighting and handle typesetting
     document.addEventListener('DOMContentLoaded', function() {
+      // Check if we're in dark mode
+      const isDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      console.log('Dark mode detected:', isDarkMode);
+      
+      // Function to apply dark mode to code blocks that might have been missed
+      function ensureDarkModeForCode() {
+        if (isDarkMode) {
+          document.querySelectorAll('pre, code, .hljs').forEach(el => {
+            if (el.tagName === 'PRE') {
+              el.style.backgroundColor = '#161b22';
+            } else {
+              if (el.classList.contains('hljs')) {
+                el.style.backgroundColor = '#161b22';
+                el.style.color = '#c9d1d9';
+              }
+            }
+          });
+        }
+      }
+      
       // Apply syntax highlighting to all code blocks
       // This will attempt auto-detection for blocks without a language class
       document.querySelectorAll('pre code').forEach(function(block) {
@@ -1170,6 +1254,15 @@ function createHtmlTemplate(content) {
         }
       });
       
+      // Apply dark mode styling immediately after highlighting
+      ensureDarkModeForCode();
+      
+      // Also apply dark mode periodically to catch any elements that might be modified
+      setTimeout(ensureDarkModeForCode, 500);
+      setTimeout(ensureDarkModeForCode, 1000);
+      // Final check after all other operations should be complete
+      setTimeout(ensureDarkModeForCode, 2000);
+      
       // Also highlight inline code blocks with language specification
       document.querySelectorAll('code[class^="language-"]').forEach(function(el) {
         if (!el.closest('pre')) { // Only target inline code, not code blocks
@@ -1189,7 +1282,22 @@ function createHtmlTemplate(content) {
             // Replace the element with the wrapped version
             el.parentNode.insertBefore(wrapper, el);
             wrapper.appendChild(el);
+            
+            // Apply dark mode to this element if needed
+            if (isDarkMode && el.classList.contains('hljs')) {
+              el.style.backgroundColor = '#161b22';
+              el.style.color = '#c9d1d9';
+            }
           }
+        }
+      });
+      
+      // Set up a listener for dark mode changes
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+        const newDarkMode = e.matches;
+        console.log('Dark mode changed to:', newDarkMode);
+        if (newDarkMode) {
+          ensureDarkModeForCode();
         }
       });
       
