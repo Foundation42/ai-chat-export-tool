@@ -39,6 +39,6 @@
       "js": ["claude-extractor.js", "content.js"]
     }
   ],
-  "author": "Social Magnetics",
+  "author": "Foundation42",
   "homepage_url": "https://github.com/Foundation42/ai-chat-export-tool"
 }

@@ -1,7 +1,7 @@
 // Guard to prevent script from running multiple times
-if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
-  window.SocialMagneticsAIChatExportTool = true;
-  console.log('AI Chat Export Tool by Social Magnetics loaded');
+if (typeof window.Foundation42AIChatExportTool === 'undefined') {
+  window.Foundation42AIChatExportTool = true;
+  console.log('AI Chat Export Tool by Foundation42 loaded');
 
   // Set up message listeners
   chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
@@ -1321,7 +1321,7 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   </div>
   
   <div class="footer">
-    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}${platform !== 'chatgpt' ? ' • Platform: ' + (metadata.platformName || platformName || platform) : ''}</p>
+    <p>Exported with AI Chat Export Tool by Foundation42 • ${new Date().toISOString().split('T')[0]}${platform !== 'chatgpt' ? ' • Platform: ' + (metadata.platformName || platformName || platform) : ''}</p>
   </div>
 
   <script>
