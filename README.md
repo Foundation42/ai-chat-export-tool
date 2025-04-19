@@ -1,6 +1,6 @@
 # AI Chat Export Tool
 
-A browser extension for exporting AI chat conversations with rich content preservation, including Markdown and HTML formats. Currently supports ChatGPT with planned support for Claude and Gemini.
+A browser extension for exporting AI chat conversations with rich content preservation, including Markdown and HTML formats. Currently supports ChatGPT with experimental support for Claude and planned support for Gemini.
 
 ## Features
 
@@ -28,8 +28,10 @@ Firefox support is planned for a future release.
 
 ## Usage
 
-1. Visit [ChatGPT](https://chatgpt.com) or [chat.openai.com](https://chat.openai.com)
-2. Have a conversation with ChatGPT
+1. Visit one of the supported AI chat platforms:
+   - [ChatGPT](https://chatgpt.com) or [chat.openai.com](https://chat.openai.com)
+   - [Claude](https://claude.ai) (experimental support)
+2. Have a conversation with the AI assistant
 3. Click the extension icon in your browser toolbar
 4. Select your preferred export format(s):
    - **Markdown**: Clean text format with images preserved as links
@@ -37,7 +39,9 @@ Firefox support is planned for a future release.
 5. Click "Export Current Conversation"
 6. The conversation will be downloaded in your selected format(s)
 
-**Note:** The extension only works when you're actively on a ChatGPT conversation page.
+**Note:** The extension only works when you're actively on a supported AI conversation page.
+
+**Claude Support:** Claude support is experimental and may not work perfectly with all conversations or UI versions.
 
 ## Features in Detail
 
@@ -55,12 +59,13 @@ Firefox support is planned for a future release.
 - Automatic dark mode support based on system preferences
 - Image rendering with proper alt text
 
-## Coming Soon
+## Supported Platforms
 
-- Support for additional AI platforms:
-  - Claude (Anthropic)
-  - Gemini (Google)
-  - Other popular AI chat interfaces
+- ChatGPT (OpenAI) - Fully supported
+- Claude (Anthropic) - Experimental support
+- Gemini (Google) - Coming soon
+
+## Coming Soon
 - Batch export of all conversations
 - Downloading images locally with the conversation
 - Archive format with organized folder structure

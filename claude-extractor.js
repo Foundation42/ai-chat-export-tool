@@ -1,5 +1,5 @@
-// Claude-specific conversation extraction logic
-// This file contains specialized functions for extracting Claude AI conversations
+// Improved Claude-specific conversation extraction logic
+// This specifically targets elements with data-test-render-count
 
 // Set to track images we've already processed to avoid duplicates
 let claudeProcessedImageSrcs = new Set();
@@ -105,6 +105,45 @@ function processClaudeNode(node) {
                         }
                     }
                     
+                    // Handle Claude's unique code block structure
+                    // Check for code block container with relative group/copy class pattern
+                    if (node.className && 
+                        (node.className.includes('relative group/copy') || 
+                         node.className.includes('relative group'))) {
+                        // This is likely a Claude code block container
+                        const preElement = node.querySelector('pre');
+                        if (preElement) {
+                            // Look for code or code-block elements
+                            const codeElement = preElement.querySelector('.code-block__code') || 
+                                              preElement.querySelector('code');
+                            
+                            if (codeElement) {
+                                // Try to extract language
+                                let language = '';
+                                
+                                // Claude often has a language indicator in a div with text-xs class
+                                const langDiv = node.querySelector('div.text-xs, div.text-text-500');
+                                if (langDiv && langDiv.textContent) {
+                                    language = langDiv.textContent.trim().toLowerCase();
+                                }
+                                
+                                // Also check code element classes for language hints
+                                if (!language && codeElement.className) {
+                                    const langMatch = codeElement.className.match(/language[-_](\w+)/i);
+                                    if (langMatch && langMatch[1]) {
+                                        language = langMatch[1].toLowerCase();
+                                    }
+                                }
+                                
+                                // Get the text content of the code
+                                const codeText = codeElement.textContent || '';
+                                console.log("Found code block with language:", language);
+                                
+                                return `\n\n\`\`\`${language}\n${codeText}\n\`\`\`\n\n`;
+                            }
+                        }
+                    }
+                    
                     // Process all children
                     return Array.from(node.childNodes).map(processClaudeNode).join('');
                     
@@ -123,7 +162,16 @@ function processClaudeNode(node) {
                         // This will be handled by the PRE processor
                         return node.textContent;
                     }
-                    // Inline code
+                    
+                    // Handle inline code specifically for Claude's style
+                    if (node.className && 
+                        (node.className.includes('bg-text-200/5') || 
+                         node.className.includes('whitespace-pre-wrap'))) {
+                        console.log("Found inline code:", node.textContent);
+                        return '`' + node.textContent + '`';
+                    }
+                    
+                    // Inline code (default)
                     return '`' + node.textContent + '`';
                     
                 case 'PRE':
@@ -179,7 +227,7 @@ function processClaudeNode(node) {
     }
 }
 
-// Extract Claude conversation using improved approach with better debug
+// Extract Claude conversation using a simpler, more targeted approach
 function extractClaudeMessages(debug = false) {
     console.log("Starting Claude conversation export...");
     claudeProcessedImageSrcs.clear();
@@ -189,253 +237,95 @@ function extractClaudeMessages(debug = false) {
     
     if (verbose) {
         console.log("VERBOSE MODE: Claude extractor running with detailed logs");
+        console.log("Document title:", document.title);
+        console.log("Current URL:", window.location.href);
     }
     
-    // Try to detect which version of the Claude UI we're using
-    let claudeUiVersion = 'unknown';
+    // Try a more targeted approach to find Claude messages
+    // Start with direct queries for elements with data-test-render-count
+    let messageBlocks = Array.from(document.querySelectorAll('div[data-test-render-count]'));
     
-    // Check for identifying DOM elements to determine UI version
-    if (document.querySelector('.font-claude-message')) {
-        claudeUiVersion = 'classic';
-    } else if (document.querySelector('[data-message-author-role]')) {
-        claudeUiVersion = 'modern';
-    } else if (document.querySelector('.group\\/conversation-turn')) {
-        claudeUiVersion = 'new-chat';
-    }
-    
-    console.log(`Detected Claude UI version: ${claudeUiVersion}`);
-    
-    // Find the main conversation container with multiple fallback options
-    const containerSelectors = [
-        'div[role="region"]',
-        '.flex.min-h-screen',
-        'main',
-        '.chat-container',
-        '#__next main',
-        '.chat-view',
-        'div[class*="chat-view"]',
-        'div[class*="conversation"]',
-        '.mx-auto.flex.max-w-\\[--thread-content-max-width\\]', // New Claude UI
-        '.flex.h-full.flex-col', // Another common container
-        'div.overflow-y-auto', // Scrollable container
-        'body', // Last resort - search the entire document
-    ];
-    
-    let mainContainer = null;
-    for (const selector of containerSelectors) {
-        try {
-            const element = document.querySelector(selector);
-            if (element) {
-                mainContainer = element;
-                console.log(`Found Claude container using selector: ${selector}`);
-                break;
-            }
-        } catch (e) {
-            if (verbose) {
-                console.log(`Error with selector ${selector}: ${e.message}`);
-            }
-        }
-    }
-    
-    if (!mainContainer) {
-        console.error('Could not find the Claude conversation container.');
-        return null;
-    }
-    
-    if (verbose) {
-        console.log("Main container HTML sample:", mainContainer.innerHTML.substring(0, 500) + "...");
-        console.log("Main container children count:", mainContainer.children.length);
-    }
-    
-    // Try multiple approaches to find all message blocks in Claude's interface
-    let messageBlocks = [];
-    
-    // IMPORTANT: Search WITHIN the main container, not the entire document
-    
-    // Approach 1: Look for elements with data attributes specific to Claude
-    const dataElements = Array.from(mainContainer.querySelectorAll('[data-message-author-role], [data-test-render-count]'));
-    if (dataElements.length > 0) {
-        console.log(`Found ${dataElements.length} messages using data attributes`);
-        messageBlocks = dataElements;
-    }
-    
-    // Approach 2: Try Claude's current common message containers
-    if (messageBlocks.length === 0) {
-        const currentSelectors = [
-            'div.min-h-8.text-message', // Current Claude messages
-            'article.text-token-text-primary',  // Another common pattern
-            'div.whitespace-pre-wrap.break-words', // Content within messages
-            'div.markdown.prose', // Markdown content
-            '.font-claude-message'
+    // If this fails, look for specific Claude selectors
+    if (messageBlocks.length < 2) {
+        console.log("Could not find enough messages using data-test-render-count, trying other Claude selectors");
+        
+        // Try Claude's current UI elements
+        const claudeSelectors = [
+            '.font-claude-message', 
+            'div[data-is-streaming="false"].group',
+            'div.grid-cols-1.grid.gap-2\\.5',
+            '.whitespace-pre-wrap.break-words'
         ];
         
-        for (const selector of currentSelectors) {
+        for (const selector of claudeSelectors) {
             try {
-                const elements = Array.from(mainContainer.querySelectorAll(selector));
-                if (elements.length > 1) {
-                    console.log(`Found ${elements.length} messages using ${selector}`);
+                const elements = Array.from(document.querySelectorAll(selector));
+                if (elements.length >= 2) {
+                    console.log(`Found ${elements.length} Claude messages using selector: ${selector}`);
                     messageBlocks = elements;
                     break;
                 }
             } catch (e) {
-                if (verbose) {
-                    console.log(`Error with selector ${selector}: ${e.message}`);
-                }
+                console.log(`Error with selector ${selector}:`, e.message);
             }
         }
     }
     
-    // Approach 3: Try to find specific Claude UI structures (updated April 2025)
-    if (messageBlocks.length === 0) {
-        // Look for specific patterns in the current Claude UI
-        const patterns = [
-            '.flex.flex-col.gap-1.empty\\:hidden', // Message content container
-            '.text-base.my-auto', // Common wrapper
-            '.mx-auto.flex.max-w-\\[--thread-content-max-width\\]', // Thread container
-            'div.group\\/conversation-turn', // Conversation turn
-            '.whitespace-pre-wrap', // Pre-wrapped text
-            'div[data-is-streaming] > div', // Streaming content
-            'div.flex.max-w-full.flex-col', // Message container
-            'div.prose', // Prose content
-            'div.markdown', // Markdown content
-            'div.min-h-full > div > p' // Paragraphs in message containers
-        ];
+    // If we still can't find messages, try a broader approach
+    if (messageBlocks.length < 2) {
+        console.log("Could not find enough message blocks with targeted selectors, trying broader approach");
         
-        for (const pattern of patterns) {
-            try {
-                const elements = Array.from(mainContainer.querySelectorAll(pattern));
-                if (elements.length > 1) {
-                    console.log(`Found ${elements.length} messages using pattern ${pattern}`);
-                    messageBlocks = elements;
+        // Try to find elements with substantial paragraph content
+        const paragraphs = Array.from(document.querySelectorAll('p.whitespace-pre-wrap, div > p.whitespace-pre-wrap'));
+        
+        // Group paragraphs by parent to find message containers
+        const parentMap = new Map();
+        
+        paragraphs.forEach(p => {
+            // Look for parent with reasonable depth
+            let parent = p.parentElement;
+            let depth = 0;
+            while (parent && depth < 5) {
+                // Check if this seems like a message container
+                if (parent.querySelector('ol') || 
+                    parent.querySelector('ul') || 
+                    parent.children.length > 1) {
+                    
+                    if (!parentMap.has(parent)) {
+                        parentMap.set(parent, []);
+                    }
+                    parentMap.get(parent).push(p);
                     break;
                 }
-            } catch (e) {
-                // Some complex selectors might fail, continue to next one
-                if (verbose) {
-                    console.log(`Selector error for ${pattern}: ${e.message}`);
-                }
-            }
-        }
-    }
-    
-    // Approach 4: Look for grid-cols-1 which might contain message blocks
-    if (messageBlocks.length === 0) {
-        try {
-            const gridElements = Array.from(mainContainer.querySelectorAll('.grid-cols-1'));
-            if (gridElements.length > 0) {
-                // Filter to only the elements that seem to be messages
-                const messageGrids = gridElements.filter(el => {
-                    return el.textContent.trim().length > 0 && !el.querySelector('script');
-                });
                 
-                if (messageGrids.length > 0) {
-                    console.log(`Found ${messageGrids.length} messages using .grid-cols-1`);
-                    messageBlocks = messageGrids;
-                }
-            }
-        } catch (e) {
-            if (verbose) {
-                console.log(`Error in grid elements search: ${e.message}`);
-            }
-        }
-    }
-    
-    // Approach 5: Try general message patterns
-    if (messageBlocks.length === 0) {
-        // Common Claude UI patterns for messages
-        const messagePatterns = [
-            'div[class*="message"]',
-            'div[class*="chat-message"]',
-            'div[class*="chat-turn"]',
-            'div[class*="message-content"]',
-            'div[class*="bubble"]',
-            'div[class*="message-bubble"]',
-            'div > div > p'
-        ];
-        
-        // Try each pattern
-        for (const pattern of messagePatterns) {
-            try {
-                const elements = Array.from(mainContainer.querySelectorAll(pattern));
-                if (elements.length > 1) { // Need at least 2 messages for a conversation
-                    console.log(`Found ${elements.length} messages using ${pattern}`);
-                    messageBlocks = elements;
-                    break;
-                }
-            } catch (e) {
-                if (verbose) {
-                    console.log(`Error with selector ${pattern}: ${e.message}`);
-                }
-            }
-        }
-    }
-    
-    // Last resort: look for paragraphs with substantial text
-    if (messageBlocks.length === 0) {
-        // Find any paragraph or div with substantial text directly inside main container
-        const textElements = Array.from(mainContainer.querySelectorAll('p, div > p, div.whitespace-pre-wrap'));
-        
-        // Filter to elements with meaningful content
-        const contentElements = textElements.filter(el => {
-            return el.textContent && el.textContent.trim().length > 15 && 
-                   !el.closest('header') && !el.closest('footer') &&
-                   !el.closest('nav');
-        });
-        
-        if (contentElements.length > 1) {
-            console.log(`Found ${contentElements.length} text elements with content`);
-            messageBlocks = contentElements;
-        }
-    }
-    
-    // Last resort: Manual DOM walk to find message-like structures
-    if (messageBlocks.length === 0) {
-        console.log("Attempting manual DOM walk as last resort");
-        const allDivs = mainContainer.querySelectorAll('div');
-        const candidates = [];
-        
-        Array.from(allDivs).forEach(div => {
-            // Look for divs with meaningful text, paragraphs, and not too many children
-            const text = div.textContent?.trim() || '';
-            const hasParagraphs = div.querySelectorAll('p').length > 0;
-            const childCount = div.children.length;
-            
-            if ((text.length > 20 || hasParagraphs) && childCount < 15 && childCount > 0) {
-                candidates.push(div);
+                parent = parent.parentElement;
+                depth++;
             }
         });
         
-        // Sort by text length, assuming longer text is more likely to be messages
-        candidates.sort((a, b) => b.textContent.length - a.textContent.length);
+        // Find parents with the most paragraphs (likely message containers)
+        const messageContainers = Array.from(parentMap.entries())
+            .filter(([parent, paragraphs]) => paragraphs.length > 0)
+            .sort(([parent1, p1], [parent2, p2]) => p2.length - p1.length)
+            .map(([parent]) => parent);
         
-        if (candidates.length > 1) {
-            console.log(`Found ${candidates.length} potential message divs via manual DOM walk`);
-            messageBlocks = candidates.slice(0, 20); // Take top 20 candidates
+        if (messageContainers.length >= 2) {
+            console.log(`Found ${messageContainers.length} potential message containers by paragraph grouping`);
+            messageBlocks = messageContainers;
         }
     }
     
-    // If still no messages found, log detailed debug info
-    if (messageBlocks.length === 0) {
-        console.error('Claude message detection failed. Detailed DOM structure:');
-        
-        // Log first few divs in the container to understand structure
-        const divs = mainContainer.querySelectorAll('div');
-        console.log(`Container has ${divs.length} divs.`);
-        
+    if (messageBlocks.length < 2) {
+        console.error("Failed to find enough Claude messages for extraction");
         if (verbose) {
-            Array.from(divs).slice(0, 5).forEach((div, i) => {
-                console.log(`Div ${i} classes:`, div.className);
-                console.log(`Div ${i} children:`, div.children.length);
-                console.log(`Div ${i} text sample:`, div.textContent.substring(0, 100) + "...");
-            });
+            console.log("DOM structure sample:", document.body.innerHTML.substring(0, 1000));
         }
-        
         return null;
     }
     
     console.log(`Found ${messageBlocks.length} Claude message blocks`);
     
-    // Process each message block to determine if it's from user or assistant
+    // Process each message block to extract content
     const messages = [];
     let userMessageCount = 0;
     let assistantMessageCount = 0;
@@ -453,58 +343,48 @@ function extractClaudeMessages(debug = false) {
         }
     }
     
-    // Fallback to extracted version from page content
+    // Extract from content if needed
     if (claudeVersion === 'Claude') {
         const versionPatterns = [
             /Claude\s*([\d\.]+|Opus|Sonnet|Haiku)/i,
             /I am Claude\s*([\d\.]+|Opus|Sonnet|Haiku)/i
         ];
         
-        for (const block of messageBlocks) {
-            for (const pattern of versionPatterns) {
-                const match = block.textContent.match(pattern);
-                if (match && match[1]) {
-                    claudeVersion = 'Claude ' + match[1];
-                    break;
-                }
+        const allText = document.body.textContent;
+        for (const pattern of versionPatterns) {
+            const match = allText.match(pattern);
+            if (match && match[1]) {
+                claudeVersion = 'Claude ' + match[1];
+                break;
             }
-            if (claudeVersion !== 'Claude') break;
         }
     }
     
+    // Simplify message role detection for Claude
     messageBlocks.forEach((block, index) => {
-        // Try to determine if this is a user or assistant message
-        // In Claude, user messages often have different style/class than assistant messages
-        
         let isUser = false;
         
-        // Try multiple methods to determine if this is a user or Claude message
-        
-        // Method 1: Check for claude-specific classes or attribute patterns
-        if (block.classList.contains('font-claude-message') ||
-            block.closest('[data-is-streaming="true"]') ||
-            block.querySelector('.text-token-text-primary') ||
-            block.closest('[data-message-author-role="assistant"]')) {
+        // 1. For clear cases with class indicators
+        if (block.classList && block.classList.contains('font-claude-message')) {
             isUser = false;
         } 
-        // Look for user-specific patterns
-        else if (block.classList.contains('bg-token-message-surface') ||
-                block.closest('[data-message-author-role="user"]')) {
+        else if (block.closest && block.closest('[data-message-author-role="assistant"]')) {
+            isUser = false;
+        }
+        else if (block.closest && block.closest('[data-message-author-role="user"]')) {
             isUser = true;
         }
-        // Method 2: Check content patterns that might indicate Claude
-        else if (block.textContent.includes('I am Claude') || 
-                block.textContent.includes('As an AI assistant') ||
-                block.textContent.match(/Claude (3\.5|Opus|Sonnet|Haiku)/i)) {
+        // 2. Content-based detection
+        else if (block.textContent && (
+            block.textContent.includes('I am Claude') || 
+            block.textContent.includes('As an AI assistant') ||
+            block.textContent.match(/Claude (3\.5|Opus|Sonnet|Haiku)/i))) {
             isUser = false;
         }
-        // Method 3: Position in conversation
-        else if (index === 0) {
-            isUser = true; // First message is typically from user
-        } 
-        // Method 4: Alternating pattern (fallback)
+        // 3. Position-based detection
         else {
-            isUser = index % 2 === 0; // Even indices are user messages, odd are Claude
+            // In Claude, even indices (0, 2, 4...) are typically user messages
+            isUser = (index % 2 === 0);
         }
         
         // Process the content
@@ -542,8 +422,8 @@ function extractClaudeMessages(debug = false) {
 // Export the functions for use in content.js
 window.ClaudeExtractor = {
     // Only expose the necessary extraction function and metadata
-    extractMessages: function() {
-        const result = extractClaudeMessages();
+    extractMessages: function(debug = false) {
+        const result = extractClaudeMessages(debug);
         
         // If extraction failed, return null
         if (!result) return null;

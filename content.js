@@ -329,12 +329,15 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
     if (platform === 'claude' && typeof window.ClaudeExtractor !== 'undefined') {
       console.log("Using Claude-specific extraction logic");
       try {
-        const claudeResult = window.ClaudeExtractor.extractMessages();
+        // Enable debug mode for verbose logging
+        const debug = window.location.href.includes('debug=true');
+        const claudeResult = window.ClaudeExtractor.extractMessages(debug);
         
         // If extraction failed, log but continue to fallback extraction
         if (!claudeResult) {
           console.log("Claude extraction failed, falling back to default extraction");
         } else {
+          console.log("Claude extraction succeeded with", claudeResult.messages.length, "messages");
           return claudeResult;
         }
       } catch (error) {
@@ -631,9 +634,10 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   }
 
   // Convert markdown to HTML with improved LaTeX handling
-  function convertMarkdownToHTML(markdown) {
-    // Get platform info
-    const platform = detectAIPlatform();
+  function convertMarkdownToHTML(markdown, exportMetadata) {
+    // Get platform info from params or detect it
+    const metadata = exportMetadata || {};
+    const platform = metadata.platform || detectAIPlatform();
     const isClaudeConversation = platform === 'claude';
     
     // Create wrapper elements for HTML structure
@@ -665,9 +669,6 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
         html += wrapMessage(messageHtml, messageRole);
       }
     }
-
-    // Get metadata from the result for proper HTML generation
-    const metadata = result.metadata || {};
     
     // Create the complete HTML document
     const htmlTemplate = createHtmlTemplate(html, metadata);
