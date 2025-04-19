@@ -328,7 +328,15 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
     // Use platform-specific extractor
     if (platform === 'claude' && typeof window.ClaudeExtractor !== 'undefined') {
       console.log("Using Claude-specific extraction logic");
-      return window.ClaudeExtractor.extractMessages();
+      const claudeResult = window.ClaudeExtractor.extractMessages();
+      
+      // If extraction failed, return null so we can fall back to default
+      if (!claudeResult) {
+        console.log("Claude extraction failed, falling back to default extraction");
+        return null;
+      }
+      
+      return claudeResult;
     }
     
     // For ChatGPT or fallback to default extraction for other platforms
