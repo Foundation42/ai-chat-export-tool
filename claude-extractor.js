@@ -387,123 +387,25 @@ function extractClaudeMessages() {
 
 // Export the functions for use in content.js
 window.ClaudeExtractor = {
-    extractMessages: extractClaudeMessages,
-    processNode: processClaudeNode,
-    
-    // Generate standalone Claude exports (for direct use without extension integration)
-    generateMarkdown: function(result) {
-        const { messages, claudeVersion, stats } = result;
+    // Only expose the necessary extraction function and metadata
+    extractMessages: function() {
+        const result = extractClaudeMessages();
         
-        let markdown = `# ${claudeVersion} Conversation Export\n\n`;
-        markdown += `Exported on: ${new Date().toLocaleString()}\n\n`;
+        // If extraction failed, return null
+        if (!result) return null;
         
-        messages.forEach(message => {
-            const roleTitle = message.role === 'user' ? 'Human' : claudeVersion;
-            markdown += `## ${roleTitle}\n\n${message.content}\n\n`;
-        });
-        
-        // Add a note if the distribution seems off
-        if (stats.userCount === 0 || stats.assistantCount === 0) {
-            console.warn("Warning: Only detected messages from one participant. The extraction might be incomplete.");
-            markdown += "\n\n*Note: The export might be incomplete. Only detected messages from " + 
-                      (stats.userCount > 0 ? "Human" : claudeVersion) + ".*\n";
-        }
-        
-        return markdown;
-    },
-    
-    generateHTML: function(result) {
-        const { messages, claudeVersion, stats } = result;
-        
-        let html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${claudeVersion} Conversation Export</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .message {
-            margin-bottom: 20px;
-            padding: 15px;
-            border-radius: 10px;
-        }
-        .human {
-            background-color: #f1f3f5;
-        }
-        .claude {
-            background-color: #f8f9fa;
-            border-left: 4px solid #7b68ee;
-        }
-        .message-header {
-            font-weight: bold;
-            margin-bottom: 10px;
-            font-size: 1.1em;
-        }
-        pre {
-            background-color: #f5f5f5;
-            padding: 10px;
-            border-radius: 5px;
-            overflow-x: auto;
-        }
-        code {
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-        }
-        img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 5px;
-            margin: 10px 0;
-        }
-        .meta {
-            font-size: 0.8em;
-            color: #666;
-            margin-top: 10px;
-        }
-    </style>
-</head>
-<body>
-    <h1>${claudeVersion} Conversation Export</h1>
-    <div class="meta">Exported on: ${new Date().toLocaleString()}</div>
-    <div class="conversation">`;
-        
-        messages.forEach(message => {
-            const roleClass = message.role === 'user' ? 'human' : 'claude';
-            const roleTitle = message.role === 'user' ? 'Human' : claudeVersion;
-            
-            html += `
-        <div class="message ${roleClass}">
-            <div class="message-header">${roleTitle}</div>
-            <div class="message-content">
-                ${message.content.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')}
-            </div>
-        </div>`;
-        });
-        
-        // Add warning for incomplete export if needed
-        if (stats.userCount === 0 || stats.assistantCount === 0) {
-            html += `
-        <div class="warning">
-            <p><em>Note: The export might be incomplete. Only detected messages from 
-            ${stats.userCount > 0 ? "Human" : claudeVersion}.</em></p>
-        </div>`;
-        }
-        
-        html += `
-    </div>
-    <div class="footer">
-        <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}</p>
-    </div>
-</body>
-</html>`;
-        
-        return html;
+        // Return data in a standardized format compatible with content.js
+        return {
+            messages: result.messages,
+            stats: result.stats,
+            // Add Claude-specific metadata
+            metadata: {
+                platform: 'claude',
+                claudeVersion: result.claudeVersion,
+                // Role names for display
+                userLabel: 'Human',
+                assistantLabel: result.claudeVersion || 'Claude'
+            }
+        };
     }
 };

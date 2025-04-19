@@ -615,8 +615,11 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
       }
     }
 
+    // Get metadata from the result for proper HTML generation
+    const metadata = result.metadata || {};
+    
     // Create the complete HTML document
-    const htmlTemplate = createHtmlTemplate(html);
+    const htmlTemplate = createHtmlTemplate(html, metadata);
     return htmlTemplate;
   }
 
@@ -853,11 +856,11 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   }
 
   // Function to create the complete HTML template
-  function createHtmlTemplate(content) {
-    // Get platform info for the title and other customizations
-    const platform = detectAIPlatform();
-    const isClaudeConversation = platform === 'claude';
-    const result = { claudeVersion: isClaudeConversation ? 'Claude' : null }; // Default values
+  function createHtmlTemplate(content, exportMetadata) {
+    // Get metadata that was passed from the export function
+    const metadata = exportMetadata || {};
+    const platform = metadata.platform || detectAIPlatform();
+    const platformName = metadata.platformName || (platform === 'claude' ? 'Claude' : null);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1258,7 +1261,7 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   </style>
 </head>
 <body>
-  <h1>${isClaudeConversation && result.claudeVersion ? result.claudeVersion + ' Conversation' : 'AI Chat Conversation'}</h1>
+  <h1>${metadata.claudeVersion ? metadata.claudeVersion + ' Conversation' : 'AI Chat Conversation'}</h1>
   <p>Exported on: ${new Date().toLocaleString()}</p>
   
   <div class="conversation-container">
@@ -1266,7 +1269,7 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   </div>
   
   <div class="footer">
-    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}${isClaudeConversation ? ' • Platform: ' + (result.claudeVersion || 'Claude') : ''}</p>
+    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}${platform !== 'chatgpt' ? ' • Platform: ' + (metadata.platformName || platformName || platform) : ''}</p>
   </div>
 
   <script>
@@ -1444,20 +1447,18 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
       const { messages, stats } = result;
       console.log(`Extracted ${messages.length} messages with ${stats.imageCount} images`);
 
-      // Generate markdown
-      const platform = detectAIPlatform();
-      const isClaudeConversation = platform === 'claude';
+      // Get platform-specific metadata for proper formatting
+      const metadata = result.metadata || {};
+      const platform = metadata.platform || detectAIPlatform();
       
-      // Set appropriate title based on platform and data
+      // Set appropriate title and labels based on platform and metadata
       let title = '# AI Chat Conversation';
-      let userLabel = 'User';
-      let assistantLabel = 'Assistant';
+      let userLabel = metadata.userLabel || 'User';
+      let assistantLabel = metadata.assistantLabel || 'Assistant';
       
-      // Handle Claude specific labels and info
-      if (isClaudeConversation && result.claudeVersion) {
-        title = `# ${result.claudeVersion} Conversation`;
-        userLabel = 'Human';
-        assistantLabel = result.claudeVersion || 'Claude';
+      // Handle platform-specific title (Claude, Gemini, etc.)
+      if (platform === 'claude' && metadata.claudeVersion) {
+        title = `# ${metadata.claudeVersion} Conversation`;
       }
       
       let markdown = `${title}\n\nExported on: ${new Date().toLocaleString()}\n\n`;
@@ -1511,7 +1512,10 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
             // Create filename with timestamp
             const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-            const platformPrefix = isClaudeConversation ? 'claude' : 'ai-chat';
+            // Get the platform from metadata or detect it
+            const metadata = result.metadata || {};
+            const platform = metadata.platform || detectAIPlatform();
+            const platformPrefix = platform === 'claude' ? 'claude' : 'ai-chat';
             const filename = `${platformPrefix}-conversation-${timestamp}.md`;
 
             // Send download request to background script
@@ -1549,7 +1553,10 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
             // Create filename with timestamp
             const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-            const platformPrefix = isClaudeConversation ? 'claude' : 'ai-chat';
+            // Get the platform from metadata or detect it
+            const metadata = result.metadata || {};
+            const platform = metadata.platform || detectAIPlatform();
+            const platformPrefix = platform === 'claude' ? 'claude' : 'ai-chat';
             const filename = `${platformPrefix}-conversation-${timestamp}.html`;
 
             // Send download request to background script
