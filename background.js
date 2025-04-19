@@ -1,8 +1,8 @@
-// Background script for ChatGPT Export Tool
+// Background script for AI Chat Export Tool
 
 // Listen for installation
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('ChatGPT Export Tool installed');
+  console.log('AI Chat Export Tool v1.0.0 installed');
 });
 
 // Listen for messages from popup and content script
@@ -20,12 +20,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       const activeTab = tabs[0];
       
-      // Check if we're on a ChatGPT page
+      // Check if we're on a supported AI chat page
       if (!activeTab.url || 
-          !(activeTab.url.includes('chat.openai.com') || activeTab.url.includes('chatgpt.com'))) {
+          !(activeTab.url.includes('chat.openai.com') || 
+            activeTab.url.includes('chatgpt.com') ||
+            activeTab.url.includes('claude.ai') ||
+            activeTab.url.includes('gemini.google.com'))) {
         sendResponse({ 
           success: false, 
-          message: 'Please navigate to a ChatGPT page first'
+          message: 'Please navigate to a supported AI chat platform first'
         });
         return;
       }

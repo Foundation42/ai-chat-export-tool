@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Export Tool",
-  "version": "1.0",
-  "description": "Export ChatGPT conversations to Markdown and HTML with images",
+  "name": "AI Chat Export Tool",
+  "version": "1.0.0",
+  "description": "Export AI chat conversations to Markdown and HTML with images, LaTeX and code syntax highlighting",
   "permissions": ["activeTab", "downloads", "storage", "scripting"],
-  "host_permissions": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+  "host_permissions": [
+    "https://chat.openai.com/*", 
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -12,19 +17,28 @@
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
   },
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
   "content_scripts": [
     {
-      "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+      "matches": [
+        "https://chat.openai.com/*", 
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*"
+      ],
       "js": ["content.js"]
     }
-  ]
+  ],
+  "author": "Social Magnetics",
+  "homepage_url": "https://github.com/Foundation42/ai-chat-export-tool"
 }

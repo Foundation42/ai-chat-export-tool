@@ -1,802 +1,807 @@
-// Set up message listeners
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  if (request.action === 'exportCurrent') {
-    exportCurrentConversation(request.formats, sendResponse);
-    return true; // Keep the messaging channel open for async response
-  } else if (request.action === 'exportAll') {
-    exportAllConversations(request.formats, sendResponse);
-    return true; // Keep the messaging channel open for async response
-  }
-});
+// Guard to prevent script from running multiple times
+if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
+  window.SocialMagneticsAIChatExportTool = true;
+  console.log('AI Chat Export Tool by Social Magnetics loaded');
 
-// Set to track images we've already processed to avoid duplicates
-let processedImageSrcs = new Set();
-
-// Helper function to extract image details
-function extractImageMarkdown(imgElement) {
-  if (!imgElement) return '';
-  
-  const src = imgElement.getAttribute('src');
-  if (!src || processedImageSrcs.has(src)) {
-    return ''; // Skip if already processed
-  }
-  
-  // Only process images from valid domains (oaiusercontent.com or other trusted sources)
-  if (src.startsWith('data:') || 
-    (src.includes('http') && 
-     !src.includes('oaiusercontent.com') && 
-     !src.includes('openai.com') && 
-     !src.includes('/blob:'))) {
-        
-    console.log(`Skipping UI image: ${src.substring(0, 30)}...`);
-    return '';
-  }
-  
-  // Mark this image as processed
-  processedImageSrcs.add(src);
-  
-  const alt = imgElement.getAttribute('alt') || 'Generated image';
-  
-  // Extract image ID from URL if possible
-  let imageId = 'unknown';
-  try {
-    if (src && src.includes('/')) {
-      // Try to find a UUID in the URL (most reliable method)
-      const uuidPattern = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
-      const match = src.match(uuidPattern);
-      if (match && match[1]) {
-        imageId = match[1];
-      } else {
-        // Try to extract from the files path segment
-        const filePattern = /files\/([^/?]+)/i;
-        const fileMatch = src.match(filePattern);
-        if (fileMatch && fileMatch[1]) {
-          imageId = fileMatch[1];
-        } else {
-          // Use the last part of the URL as a fallback
-          const urlParts = src.split('/');
-          if (urlParts.length > 0) {
-            imageId = urlParts[urlParts.length - 1].split('?')[0];
-          }
-        }
-      }
+  // Set up message listeners
+  chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+    if (request.action === 'exportCurrent') {
+      exportCurrentConversation(request.formats, sendResponse);
+      return true; // Keep the messaging channel open for async response
+    } else if (request.action === 'exportAll') {
+      exportAllConversations(request.formats, sendResponse);
+      return true; // Keep the messaging channel open for async response
     }
-  } catch (e) {
-    console.error('Error extracting image ID:', e);
-  }
-  
-  console.log(`Processing image: ${src.substring(0, 50)}... (ID: ${imageId})`);
-  return `\n\n![${alt} (ID: ${imageId})](${src}) <!-- Image URI: ${src} | Image ID: ${imageId} -->\n\n`;
-}
-
-// Process node and its children recursively
-function processNode(node) {
-  if (!node) return '';
-  
-  // Skip script and style nodes
-  if (node.nodeType === Node.ELEMENT_NODE && 
-    (node.tagName === 'SCRIPT' || node.tagName === 'STYLE')) {
-    return '';
-  }
-  
-  switch (node.nodeType) {
-    case Node.TEXT_NODE:
-      return node.textContent;
-      
-    case Node.ELEMENT_NODE:
-      // Check for image containers first
-      const isImageContainer = 
-        (node.classList && (
-          node.classList.contains('group\/imagegen-image') || 
-          node.classList.contains('overflow-hidden')
-        )) ||
-        (node.querySelector && (
-          node.querySelector('.group\\/imagegen-image') || 
-          node.querySelector('[style*="aspect-ratio"]')
-        )) ||
-        (node.style && node.style.aspectRatio) || 
-        (node.tagName === 'DIV' && node.className && 
-         (node.className.includes('grid') && node.className.includes('pb-2')));
-      
-      if (isImageContainer) {
-        const imgElements = node.querySelectorAll('img');
-        if (imgElements && imgElements.length > 0) {
-          console.log(`Found ${imgElements.length} images in container`);
-          
-          // Find the best quality image (not blurred)
-          let bestImage = null;
-          
-          // First, try to find an image in a non-blurred container
-          for (const img of imgElements) {
-            const parentElement = img.parentNode;
-            const style = parentElement && parentElement.style;
-            const className = parentElement && parentElement.className;
-            
-            const hasBlur = style && style.filter && style.filter.includes('blur') ||
-                        className && 
-                        (typeof className === 'string' && className.includes('blur'));
-            
-            // Criteria for good images: no blur + high z-index or opacity=1
-            const hasGoodZ = parentElement && 
-                        parentElement.classList && 
-                        (parentElement.classList.contains('z-1') || 
-                         parentElement.classList.contains('z-2'));
-            
-            const hasGoodOpacity = style && 
-                              style.opacity && 
-                              parseFloat(style.opacity) > 0.8;
-            
-            if (!hasBlur && (hasGoodZ || hasGoodOpacity)) {
-              bestImage = img;
-              break;
-            }
-          }
-          
-          // If we didn't find a good image, take the first one
-          if (!bestImage) bestImage = imgElements[0];
-          
-          return extractImageMarkdown(bestImage);
-        }
-      }
-      
-      // Handle different element types
-      switch (node.tagName) {
-        case 'IMG':
-          return extractImageMarkdown(node);
-          
-        case 'BR':
-          return '\n';
-          
-        case 'P':
-          let pContent = Array.from(node.childNodes).map(processNode).join('');
-          return pContent + '\n\n';
-          
-        case 'DIV':
-          // Special case for image containers with style containing aspect-ratio
-          if (node.style && node.style.aspectRatio) {
-            const imgElements = node.querySelectorAll('img');
-            if (imgElements && imgElements.length > 0) {
-              return extractImageMarkdown(imgElements[0]);
-            }
-          }
-          // Process all children
-          return Array.from(node.childNodes).map(processNode).join('');
-          
-        case 'STRONG':
-        case 'B':
-          return '**' + Array.from(node.childNodes).map(processNode).join('') + '**';
-          
-        case 'EM':
-        case 'I':
-          return '*' + Array.from(node.childNodes).map(processNode).join('') + '*';
-          
-        case 'CODE':
-          // Check if this is inside a PRE (code block)
-          const parentTag = node.parentNode?.nodeName || '';
-          if (parentTag === 'PRE') {
-            // This will be handled by the PRE processor
-            return node.textContent;
-          }
-          // Inline code
-          return '`' + node.textContent + '`';
-          
-        case 'PRE':
-          // Code block
-          const codeNode = node.querySelector('code');
-          let language = '';
-          // Improved language extraction: find the class starting with "language-"
-          if (codeNode && codeNode.className) {
-            const langClass = codeNode.className.split(' ').find(cls => cls.startsWith('language-'));
-            if (langClass) {
-              language = langClass.replace('language-', '');
-            }
-          }
-          const code = codeNode ? codeNode.textContent : node.textContent;
-          // Ensure newline after language, handle potential empty language
-          const langPart = language ? language + '\n' : '\n'; 
-          return '```' + langPart + code + '\n```\n\n';
-          
-        case 'A':
-          const href = node.getAttribute('href');
-          const text = Array.from(node.childNodes).map(processNode).join('');
-          return '[' + text + '](' + href + ')';
-          
-        case 'UL':
-          return '\n' + Array.from(node.querySelectorAll('li')).map(li => 
-            '- ' + Array.from(li.childNodes).map(processNode).join('')
-          ).join('\n') + '\n\n';
-          
-        case 'OL':
-          return '\n' + Array.from(node.querySelectorAll('li')).map((li, index) => 
-            (index + 1) + '. ' + Array.from(li.childNodes).map(processNode).join('')
-          ).join('\n') + '\n\n';
-          
-        case 'LI':
-          // These are handled by UL and OL processing
-          if (node.parentNode && 
-             (node.parentNode.nodeName === 'UL' || node.parentNode.nodeName === 'OL')) {
-            return '';
-          }
-          return Array.from(node.childNodes).map(processNode).join('');
-          
-        case 'H1':
-          return '# ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-        case 'H2':
-          return '## ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-        case 'H3':
-          return '### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-        case 'H4':
-          return '#### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-        case 'H5':
-          return '##### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-        case 'H6':
-          return '###### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
-          
-        default:
-          // Handle LaTeX blocks
-          if (node.classList && (node.classList.contains('katex') || node.classList.contains('katex-display'))) {
-            try {
-              // Method 1: Try to find annotation
-              const annotation = node.querySelector('.katex-html annotation[encoding="application/x-tex"]');
-              if (annotation && annotation.textContent) {
-                const latexSource = annotation.textContent;
-                // Check if it's a display or inline equation
-                const isDisplay = node.classList.contains('katex-display') || 
-                               (node.parentNode && node.parentNode.classList && 
-                                node.parentNode.classList.contains('katex-display'));
-                
-                return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
-              }
-              
-              // Method 2: Look for data attributes
-              const mathml = node.querySelector('math[data-latex]');
-              if (mathml && mathml.getAttribute('data-latex')) {
-                const latexSource = mathml.getAttribute('data-latex');
-                const isDisplay = node.classList.contains('katex-display') || 
-                               (node.parentNode && node.parentNode.classList && 
-                                node.parentNode.classList.contains('katex-display'));
-                
-                return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
-              }
-              
-              // Method 3: Look for .katex-mathml annotation
-              const mathmlText = node.querySelector('.katex-mathml annotation');
-              if (mathmlText && mathmlText.textContent) {
-                const latexSource = mathmlText.textContent;
-                const isDisplay = node.classList.contains('katex-display') || 
-                               (node.parentNode && node.parentNode.classList && 
-                                node.parentNode.classList.contains('katex-display'));
-                
-                return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
-              }
-              
-              // Fallback
-              const isDisplay = node.classList.contains('katex-display') || 
-                             (node.parentNode && node.parentNode.classList && 
-                              node.parentNode.classList.contains('katex-display'));
-              return isDisplay ? '[Display LaTeX Equation]' : '[Inline LaTeX Equation]';
-            } catch (e) {
-              console.error('Error processing LaTeX:', e);
-              return '[LaTeX Equation Error]';
-            }
-          }
-          
-          // For other elements, just process children
-          return Array.from(node.childNodes).map(processNode).join('');
-      }
-    
-    default:
-      return '';
-  }
-}
-
-// Find and extract messages from the conversation thread
-function extractMessages() {
-  console.log("Starting ChatGPT conversation export...");
-  
-  // Find the main thread in the DOM
-  const threadSelectors = [
-    'div[id="__next"] main', // Main structure in newer versions
-    'main div.flex.flex-col',
-    '[role="presentation"]',
-    'main .relative',
-    'div#__next div.overflow-hidden', // Common wrapper
-    'div.flex.flex-col.items-center.text-sm.h-full' // Another common pattern
-  ];
-  
-  let mainThread = null;
-  for (const selector of threadSelectors) {
-    const element = document.querySelector(selector);
-    if (element) {
-      mainThread = element;
-      console.log(`Found main thread using selector: ${selector}`);
-      break;
-    }
-  }
-  
-  if (!mainThread) {
-    console.error('Could not find the chat thread');
-    return null;
-  }
-  
-  // Find all conversation turns - these are messages from either user or assistant
-  const turnSelectors = [
-    '[data-testid^="conversation-turn-"]', // Modern GPT-4 structure
-    'article[data-message-author-role]', // Another common pattern
-    'div[data-message-author-role]', // Alternative
-    'div.w-full.text-token-text-primary', // Older versions
-    '.group[data-group-pos]',
-    'div.text-base' // Fallback
-  ];
-  
-  let conversationTurns = [];
-  for (const selector of turnSelectors) {
-    const elements = Array.from(mainThread.querySelectorAll(selector));
-    if (elements.length > 0) {
-      conversationTurns = elements;
-      console.log(`Found ${elements.length} conversation turns using selector: ${selector}`);
-      break;
-    }
-  }
-  
-  if (conversationTurns.length === 0) {
-    console.error('Could not find any messages');
-    return null;
-  }
-  
-  // Filter out nested turns (avoid duplicates)
-  conversationTurns = conversationTurns.filter(turn => {
-    return !conversationTurns.some(otherTurn => 
-      otherTurn !== turn && otherTurn.contains(turn)
-    );
   });
-  
-  console.log(`Found ${conversationTurns.length} unique conversation turns after filtering duplicates`);
-  
-  // Process each turn to extract messages and roles
-  const messages = [];
-  let userMessageCount = 0;
-  let assistantMessageCount = 0;
-  
-  conversationTurns.forEach((turn, index) => {
-    // Determine if this is a user or assistant message
-    let role = 'unknown';
-    
-    // Method 1: Check data attribute
-    const authorRole = turn.getAttribute('data-message-author-role');
-    if (authorRole) {
-      role = authorRole;
-    } else {
-      // Method 2: Look for specific elements or text
-      const h5 = turn.querySelector('h5, h6');
-      if (h5 && h5.textContent) {
-        if (h5.textContent.toLowerCase().includes('you said')) {
-          role = 'user';
-        } else if (h5.textContent.toLowerCase().includes('chatgpt') || 
-                   h5.textContent.toLowerCase().includes('assistant')) {
-          role = 'assistant';
-        }
-      }
-      
-      // Method 3: Check for icons
-      if (role === 'unknown') {
-        const userIcon = turn.querySelector('img[alt*="User"], img[alt*="user"]');
-        const botIcon = turn.querySelector('img[alt*="ChatGPT"], img[alt*="GPT"], img[alt*="Assistant"]');
-        
-        if (userIcon && !botIcon) {
-          role = 'user';
-        } else if (botIcon && !userIcon) {
-          role = 'assistant';
-        }
-      }
-      
-      // Method 4: Check for classes
-      if (role === 'unknown') {
-        // User messages often have these classes
-        if (turn.classList.contains('dark:bg-gray-800') || 
-          turn.querySelector('.bg-token-message-surface') ||
-          Array.from(turn.classList).some(c => c.includes('user'))) {
-          role = 'user';
-        } 
-        // Assistant messages often have these classes
-        else if (turn.classList.contains('bg-gray-50') || 
-               turn.classList.contains('markdown') ||
-               Array.from(turn.classList).some(c => c.includes('assistant'))) {
-          role = 'assistant';
-        }
-      }
-      
-      // Method 5: Alternating pattern (fallback)
-      if (role === 'unknown') {
-        role = (index % 2 === 0) ? 'user' : 'assistant';
-      }
+
+  // Set to track images we've already processed to avoid duplicates
+  let processedImageSrcs = new Set();
+
+  // Helper function to extract image details
+  function extractImageMarkdown(imgElement) {
+    if (!imgElement) return '';
+
+    const src = imgElement.getAttribute('src');
+    if (!src || processedImageSrcs.has(src)) {
+      return ''; // Skip if already processed
     }
-    
-    // Find the content - look for specific content areas
-    let contentElement = null;
-    
-    // Common content selectors
-    const contentSelectors = [
-      'div[data-message-text-content="true"]',
-      'div.whitespace-pre-wrap',
-      'div.markdown',
-      '.prose',
-      'div.flex.max-w-full.flex-col.grow',
-      '.text-message'
+
+    // Only process images from valid domains (oaiusercontent.com or other trusted sources)
+    if (src.startsWith('data:') ||
+      (src.includes('http') &&
+        !src.includes('oaiusercontent.com') &&
+        !src.includes('openai.com') &&
+        !src.includes('/blob:'))) {
+
+      console.log(`Skipping UI image: ${src.substring(0, 30)}...`);
+      return '';
+    }
+
+    // Mark this image as processed
+    processedImageSrcs.add(src);
+
+    const alt = imgElement.getAttribute('alt') || 'Generated image';
+
+    // Extract image ID from URL if possible
+    let imageId = 'unknown';
+    try {
+      if (src && src.includes('/')) {
+        // Try to find a UUID in the URL (most reliable method)
+        const uuidPattern = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+        const match = src.match(uuidPattern);
+        if (match && match[1]) {
+          imageId = match[1];
+        } else {
+          // Try to extract from the files path segment
+          const filePattern = /files\/([^/?]+)/i;
+          const fileMatch = src.match(filePattern);
+          if (fileMatch && fileMatch[1]) {
+            imageId = fileMatch[1];
+          } else {
+            // Use the last part of the URL as a fallback
+            const urlParts = src.split('/');
+            if (urlParts.length > 0) {
+              imageId = urlParts[urlParts.length - 1].split('?')[0];
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error extracting image ID:', e);
+    }
+
+    console.log(`Processing image: ${src.substring(0, 50)}... (ID: ${imageId})`);
+    return `\n\n![${alt} (ID: ${imageId})](${src}) <!-- Image URI: ${src} | Image ID: ${imageId} -->\n\n`;
+  }
+
+  // Process node and its children recursively
+  function processNode(node) {
+    if (!node) return '';
+
+    // Skip script and style nodes
+    if (node.nodeType === Node.ELEMENT_NODE &&
+      (node.tagName === 'SCRIPT' || node.tagName === 'STYLE')) {
+      return '';
+    }
+
+    switch (node.nodeType) {
+      case Node.TEXT_NODE:
+        return node.textContent;
+
+      case Node.ELEMENT_NODE:
+        // Check for image containers first
+        const isImageContainer =
+          (node.classList && (
+            node.classList.contains('group\/imagegen-image') ||
+            node.classList.contains('overflow-hidden')
+          )) ||
+          (node.querySelector && (
+            node.querySelector('.group\\/imagegen-image') ||
+            node.querySelector('[style*="aspect-ratio"]')
+          )) ||
+          (node.style && node.style.aspectRatio) ||
+          (node.tagName === 'DIV' && node.className &&
+            (node.className.includes('grid') && node.className.includes('pb-2')));
+
+        if (isImageContainer) {
+          const imgElements = node.querySelectorAll('img');
+          if (imgElements && imgElements.length > 0) {
+            console.log(`Found ${imgElements.length} images in container`);
+
+            // Find the best quality image (not blurred)
+            let bestImage = null;
+
+            // First, try to find an image in a non-blurred container
+            for (const img of imgElements) {
+              const parentElement = img.parentNode;
+              const style = parentElement && parentElement.style;
+              const className = parentElement && parentElement.className;
+
+              const hasBlur = style && style.filter && style.filter.includes('blur') ||
+                className &&
+                (typeof className === 'string' && className.includes('blur'));
+
+              // Criteria for good images: no blur + high z-index or opacity=1
+              const hasGoodZ = parentElement &&
+                parentElement.classList &&
+                (parentElement.classList.contains('z-1') ||
+                  parentElement.classList.contains('z-2'));
+
+              const hasGoodOpacity = style &&
+                style.opacity &&
+                parseFloat(style.opacity) > 0.8;
+
+              if (!hasBlur && (hasGoodZ || hasGoodOpacity)) {
+                bestImage = img;
+                break;
+              }
+            }
+
+            // If we didn't find a good image, take the first one
+            if (!bestImage) bestImage = imgElements[0];
+
+            return extractImageMarkdown(bestImage);
+          }
+        }
+
+        // Handle different element types
+        switch (node.tagName) {
+          case 'IMG':
+            return extractImageMarkdown(node);
+
+          case 'BR':
+            return '\n';
+
+          case 'P':
+            let pContent = Array.from(node.childNodes).map(processNode).join('');
+            return pContent + '\n\n';
+
+          case 'DIV':
+            // Special case for image containers with style containing aspect-ratio
+            if (node.style && node.style.aspectRatio) {
+              const imgElements = node.querySelectorAll('img');
+              if (imgElements && imgElements.length > 0) {
+                return extractImageMarkdown(imgElements[0]);
+              }
+            }
+            // Process all children
+            return Array.from(node.childNodes).map(processNode).join('');
+
+          case 'STRONG':
+          case 'B':
+            return '**' + Array.from(node.childNodes).map(processNode).join('') + '**';
+
+          case 'EM':
+          case 'I':
+            return '*' + Array.from(node.childNodes).map(processNode).join('') + '*';
+
+          case 'CODE':
+            // Check if this is inside a PRE (code block)
+            const parentTag = node.parentNode?.nodeName || '';
+            if (parentTag === 'PRE') {
+              // This will be handled by the PRE processor
+              return node.textContent;
+            }
+            // Inline code
+            return '`' + node.textContent + '`';
+
+          case 'PRE':
+            // Code block
+            const codeNode = node.querySelector('code');
+            let language = '';
+            // Improved language extraction: find the class starting with "language-"
+            if (codeNode && codeNode.className) {
+              const langClass = codeNode.className.split(' ').find(cls => cls.startsWith('language-'));
+              if (langClass) {
+                language = langClass.replace('language-', '');
+              }
+            }
+            const code = codeNode ? codeNode.textContent : node.textContent;
+            // Ensure newline after language, handle potential empty language
+            const langPart = language ? language + '\n' : '\n';
+            return '```' + langPart + code + '\n```\n\n';
+
+          case 'A':
+            const href = node.getAttribute('href');
+            const text = Array.from(node.childNodes).map(processNode).join('');
+            return '[' + text + '](' + href + ')';
+
+          case 'UL':
+            return '\n' + Array.from(node.querySelectorAll('li')).map(li =>
+              '- ' + Array.from(li.childNodes).map(processNode).join('')
+            ).join('\n') + '\n\n';
+
+          case 'OL':
+            return '\n' + Array.from(node.querySelectorAll('li')).map((li, index) =>
+              (index + 1) + '. ' + Array.from(li.childNodes).map(processNode).join('')
+            ).join('\n') + '\n\n';
+
+          case 'LI':
+            // These are handled by UL and OL processing
+            if (node.parentNode &&
+              (node.parentNode.nodeName === 'UL' || node.parentNode.nodeName === 'OL')) {
+              return '';
+            }
+            return Array.from(node.childNodes).map(processNode).join('');
+
+          case 'H1':
+            return '# ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+          case 'H2':
+            return '## ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+          case 'H3':
+            return '### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+          case 'H4':
+            return '#### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+          case 'H5':
+            return '##### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+          case 'H6':
+            return '###### ' + Array.from(node.childNodes).map(processNode).join('') + '\n\n';
+
+          default:
+            // Handle LaTeX blocks
+            if (node.classList && (node.classList.contains('katex') || node.classList.contains('katex-display'))) {
+              try {
+                // Method 1: Try to find annotation
+                const annotation = node.querySelector('.katex-html annotation[encoding="application/x-tex"]');
+                if (annotation && annotation.textContent) {
+                  const latexSource = annotation.textContent;
+                  // Check if it's a display or inline equation
+                  const isDisplay = node.classList.contains('katex-display') ||
+                    (node.parentNode && node.parentNode.classList &&
+                      node.parentNode.classList.contains('katex-display'));
+
+                  return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
+                }
+
+                // Method 2: Look for data attributes
+                const mathml = node.querySelector('math[data-latex]');
+                if (mathml && mathml.getAttribute('data-latex')) {
+                  const latexSource = mathml.getAttribute('data-latex');
+                  const isDisplay = node.classList.contains('katex-display') ||
+                    (node.parentNode && node.parentNode.classList &&
+                      node.parentNode.classList.contains('katex-display'));
+
+                  return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
+                }
+
+                // Method 3: Look for .katex-mathml annotation
+                const mathmlText = node.querySelector('.katex-mathml annotation');
+                if (mathmlText && mathmlText.textContent) {
+                  const latexSource = mathmlText.textContent;
+                  const isDisplay = node.classList.contains('katex-display') ||
+                    (node.parentNode && node.parentNode.classList &&
+                      node.parentNode.classList.contains('katex-display'));
+
+                  return isDisplay ? '$$' + latexSource + '$$' : '$' + latexSource + '$';
+                }
+
+                // Fallback
+                const isDisplay = node.classList.contains('katex-display') ||
+                  (node.parentNode && node.parentNode.classList &&
+                    node.parentNode.classList.contains('katex-display'));
+                return isDisplay ? '[Display LaTeX Equation]' : '[Inline LaTeX Equation]';
+              } catch (e) {
+                console.error('Error processing LaTeX:', e);
+                return '[LaTeX Equation Error]';
+              }
+            }
+
+            // For other elements, just process children
+            return Array.from(node.childNodes).map(processNode).join('');
+        }
+
+      default:
+        return '';
+    }
+  }
+
+  // Find and extract messages from the conversation thread
+  function extractMessages() {
+    console.log("Starting AI chat conversation export...");
+
+    // Find the main thread in the DOM
+    const threadSelectors = [
+      'div[id="__next"] main', // Main structure in newer versions
+      'main div.flex.flex-col',
+      '[role="presentation"]',
+      'main .relative',
+      'div#__next div.overflow-hidden', // Common wrapper
+      'div.flex.flex-col.items-center.text-sm.h-full' // Another common pattern
     ];
-    
-    for (const selector of contentSelectors) {
-      const element = turn.querySelector(selector);
+
+    let mainThread = null;
+    for (const selector of threadSelectors) {
+      const element = document.querySelector(selector);
       if (element) {
-        contentElement = element;
+        mainThread = element;
+        console.log(`Found main thread using selector: ${selector}`);
         break;
       }
     }
-    
-    // If we still don't have content, try the turn itself
-    if (!contentElement) {
-      contentElement = turn;
+
+    if (!mainThread) {
+      console.error('Could not find the chat thread');
+      return null;
     }
-    
-    // Look specifically for image containers at the turn level and process them separately
-    let imageContent = '';
-    
-    // Find all possible image containers using multiple patterns
-    const imageContainerSelectors = [
-      '.group\\/imagegen-image', 
-      '[style*="aspect-ratio"]',
-      'div.grid.pb-2',
-      'div.relative.overflow-hidden',
-      'div[tabindex="0"][role="button"]'
+
+    // Find all conversation turns - these are messages from either user or assistant
+    const turnSelectors = [
+      '[data-testid^="conversation-turn-"]', // Modern GPT-4 structure
+      'article[data-message-author-role]', // Another common pattern
+      'div[data-message-author-role]', // Alternative
+      'div.w-full.text-token-text-primary', // Older versions
+      '.group[data-group-pos]',
+      'div.text-base' // Fallback
     ];
-    
-    // Combine selectors for a comprehensive search
-    const imageContainerSelector = imageContainerSelectors.join(', ');
-    const imageContainers = turn.querySelectorAll(imageContainerSelector);
-    
-    if (imageContainers && imageContainers.length > 0) {
-      // Process each image container
-      imageContainers.forEach(container => {
-        const images = container.querySelectorAll('img');
-        if (images.length > 0) {
-          // Find the best quality image (non-blurred)
-          let bestImage = null;
-          for (const img of images) {
-            const parentStyle = img.parentNode && img.parentNode.style;
-            const hasBlur = parentStyle && 
-                       (parentStyle.filter?.includes('blur') || 
-                        img.parentNode.className?.includes('blur') ||
-                        img.parentNode.getAttribute('class')?.includes('blur'));
-                        
-            // Images in z-1 or z-2 divs are usually higher quality
-            const isHigherZ = img.parentNode && 
-                         (img.parentNode.classList.contains('z-1') || 
-                          img.parentNode.classList.contains('z-2'));
-                          
-            if (!hasBlur || isHigherZ) {
-              bestImage = img;
-              break;
-            }
-          }
-          
-          if (!bestImage) bestImage = images[0]; // Fallback
-          
-          const imgMarkdown = extractImageMarkdown(bestImage);
-          if (imgMarkdown) {
-            imageContent += imgMarkdown;
+
+    let conversationTurns = [];
+    for (const selector of turnSelectors) {
+      const elements = Array.from(mainThread.querySelectorAll(selector));
+      if (elements.length > 0) {
+        conversationTurns = elements;
+        console.log(`Found ${elements.length} conversation turns using selector: ${selector}`);
+        break;
+      }
+    }
+
+    if (conversationTurns.length === 0) {
+      console.error('Could not find any messages');
+      return null;
+    }
+
+    // Filter out nested turns (avoid duplicates)
+    conversationTurns = conversationTurns.filter(turn => {
+      return !conversationTurns.some(otherTurn =>
+        otherTurn !== turn && otherTurn.contains(turn)
+      );
+    });
+
+    console.log(`Found ${conversationTurns.length} unique conversation turns after filtering duplicates`);
+
+    // Process each turn to extract messages and roles
+    const messages = [];
+    let userMessageCount = 0;
+    let assistantMessageCount = 0;
+
+    conversationTurns.forEach((turn, index) => {
+      // Determine if this is a user or assistant message
+      let role = 'unknown';
+
+      // Method 1: Check data attribute
+      const authorRole = turn.getAttribute('data-message-author-role');
+      if (authorRole) {
+        role = authorRole;
+      } else {
+        // Method 2: Look for specific elements or text
+        const h5 = turn.querySelector('h5, h6');
+        if (h5 && h5.textContent) {
+          if (h5.textContent.toLowerCase().includes('you said')) {
+            role = 'user';
+          } else if (h5.textContent.toLowerCase().includes('chatgpt') ||
+            h5.textContent.toLowerCase().includes('assistant')) {
+            role = 'assistant';
           }
         }
-      });
-    }
-    
-    // Process the main content to extract text and inline images
-    let mainContent = processNode(contentElement);
-    
-    // Combine main content and image content
-    let content = mainContent;
-    
-    // If we have image content but it's not already in the main content, append it
-    if (imageContent && !content.includes(imageContent)) {
-      content += imageContent;
-    }
-    
-    // Clean up the content
-    content = content.trim();
-    content = content.replace(/\n{3,}/g, '\n\n'); // Normalize consecutive newlines
-    
-    if (content) {
-      messages.push({
-        role: role,
-        content: content,
-        index: index
-      });
-      
-      if (role === 'user') {
-        userMessageCount++;
-      } else if (role === 'assistant') {
-        assistantMessageCount++;
-      }
-    }
-  });
-  
-  console.log(`Extracted ${messages.length} messages: ${userMessageCount} user, ${assistantMessageCount} assistant`);
-  console.log(`Found ${processedImageSrcs.size} unique images`);
-  
-  return {
-    messages: messages,
-    stats: {
-      userCount: userMessageCount,
-      assistantCount: assistantMessageCount,
-      imageCount: processedImageSrcs.size
-    }
-  };
-}
 
-// Convert markdown to HTML with improved LaTeX handling
-function convertMarkdownToHTML(markdown) {
-  // Create wrapper elements for HTML structure
-  const wrapMessage = (content, role) => {
-    return `<div class="${role}">${content}</div>`;
-  };
-  
-  // Extract user and assistant messages
-  const parts = markdown.split(/^## (User|ChatGPT)\s*$/gm);
-  let html = '';
-  
-  // Process each message
-  for (let i = 1; i < parts.length; i += 2) {
-    if (i + 1 < parts.length) {
-      const role = parts[i].trim().toLowerCase();
-      const content = parts[i + 1].trim();
-      
-      // Parse the markdown content
-      let messageHtml = convertMessageContent(content);
-      
-      // Wrap the message in a div with the appropriate role class
-      html += wrapMessage(messageHtml, role === 'user' ? 'user' : 'assistant');
-    }
-  }
-  
-  // Create the complete HTML document
-  const htmlTemplate = createHtmlTemplate(html);
-  return htmlTemplate;
-}
+        // Method 3: Check for icons
+        if (role === 'unknown') {
+          const userIcon = turn.querySelector('img[alt*="User"], img[alt*="user"]');
+          const botIcon = turn.querySelector('img[alt*="ChatGPT"], img[alt*="GPT"], img[alt*="Assistant"]');
 
-// Helper function to convert message content from markdown to HTML
-function convertMessageContent(content) {
-  // 1. Extract and temporarily replace code blocks and inline code with placeholders
-  let codeBlocks = [];
-  content = content.replace(/```([a-zA-Z0-9]*)\n([\s\S]*?)\n?```/g, (match, lang, code) => {
-    const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
-    codeBlocks.push({lang, code});
-    return placeholder;
-  });
-  
-  let inlineCodes = [];
-  content = content.replace(/`([^`]+)`/g, (match, code) => {
-    const placeholder = `INLINE_CODE_${inlineCodes.length}`;
-    inlineCodes.push(code);
-    return placeholder;
-  });
-  
-  // 2. Extract and temporarily replace LaTeX with placeholders
-  let latexDisplays = [];
-  content = content.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-    const placeholder = `LATEX_DISPLAY_${latexDisplays.length}`;
-    latexDisplays.push(latex);
-    return placeholder;
-  });
-  
-  let latexInlines = [];
-  // Use a more specific regex for inline LaTeX to avoid false positives
-  content = content.replace(/(?<!\$)\$([^\n$]+?)\$(?!\$)/g, (match, latex) => {
-    const placeholder = `LATEX_INLINE_${latexInlines.length}`;
-    latexInlines.push(latex);
-    return placeholder;
-  });
-  
-  // 3. Process regular markdown to HTML
-  let html = content
-    // Replace headings
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^##### (.+)$/gm, '<h5>$1</h5>')
-    .replace(/^###### (.+)$/gm, '<h6>$1</h6>');
-  
-  // Replace images with clean src to avoid ${src} errors
-  html = html.replace(/!\[(.*?)\]\((.*?)\)( *<!-- .*? -->)?/g, (match, alt, src) => {
-    const cleanSrc = src.replace(/\${.*?}/g, '');
-    return `<img src="${cleanSrc}" alt="${alt}" style="max-width:100%">`;
-  });
-  
-  // Replace links
-  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
-  
-  // Replace emphasis
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  
-  // Handle lists
-  let inList = false;
-  let listType = '';
-  const lines = html.split('\n');
-  
-  for (let i = 0; i < lines.length; i++) {
-    // Unordered lists
-    if (lines[i].match(/^- (.+)$/)) {
-      if (!inList) {
-        lines[i] = '<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
-        inList = true;
-        listType = 'ul';
-      } else if (listType === 'ul') {
-        lines[i] = '<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
-      } else {
-        lines[i] = '</ol>\n<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
-        listType = 'ul';
+          if (userIcon && !botIcon) {
+            role = 'user';
+          } else if (botIcon && !userIcon) {
+            role = 'assistant';
+          }
+        }
+
+        // Method 4: Check for classes
+        if (role === 'unknown') {
+          // User messages often have these classes
+          if (turn.classList.contains('dark:bg-gray-800') ||
+            turn.querySelector('.bg-token-message-surface') ||
+            Array.from(turn.classList).some(c => c.includes('user'))) {
+            role = 'user';
+          }
+          // Assistant messages often have these classes
+          else if (turn.classList.contains('bg-gray-50') ||
+            turn.classList.contains('markdown') ||
+            Array.from(turn.classList).some(c => c.includes('assistant'))) {
+            role = 'assistant';
+          }
+        }
+
+        // Method 5: Alternating pattern (fallback)
+        if (role === 'unknown') {
+          role = (index % 2 === 0) ? 'user' : 'assistant';
+        }
+      }
+
+      // Find the content - look for specific content areas
+      let contentElement = null;
+
+      // Common content selectors
+      const contentSelectors = [
+        'div[data-message-text-content="true"]',
+        'div.whitespace-pre-wrap',
+        'div.markdown',
+        '.prose',
+        'div.flex.max-w-full.flex-col.grow',
+        '.text-message'
+      ];
+
+      for (const selector of contentSelectors) {
+        const element = turn.querySelector(selector);
+        if (element) {
+          contentElement = element;
+          break;
+        }
+      }
+
+      // If we still don't have content, try the turn itself
+      if (!contentElement) {
+        contentElement = turn;
+      }
+
+      // Look specifically for image containers at the turn level and process them separately
+      let imageContent = '';
+
+      // Find all possible image containers using multiple patterns
+      const imageContainerSelectors = [
+        '.group\\/imagegen-image',
+        '[style*="aspect-ratio"]',
+        'div.grid.pb-2',
+        'div.relative.overflow-hidden',
+        'div[tabindex="0"][role="button"]'
+      ];
+
+      // Combine selectors for a comprehensive search
+      const imageContainerSelector = imageContainerSelectors.join(', ');
+      const imageContainers = turn.querySelectorAll(imageContainerSelector);
+
+      if (imageContainers && imageContainers.length > 0) {
+        // Process each image container
+        imageContainers.forEach(container => {
+          const images = container.querySelectorAll('img');
+          if (images.length > 0) {
+            // Find the best quality image (non-blurred)
+            let bestImage = null;
+            for (const img of images) {
+              const parentStyle = img.parentNode && img.parentNode.style;
+              const hasBlur = parentStyle &&
+                (parentStyle.filter?.includes('blur') ||
+                  img.parentNode.className?.includes('blur') ||
+                  img.parentNode.getAttribute('class')?.includes('blur'));
+
+              // Images in z-1 or z-2 divs are usually higher quality
+              const isHigherZ = img.parentNode &&
+                (img.parentNode.classList.contains('z-1') ||
+                  img.parentNode.classList.contains('z-2'));
+
+              if (!hasBlur || isHigherZ) {
+                bestImage = img;
+                break;
+              }
+            }
+
+            if (!bestImage) bestImage = images[0]; // Fallback
+
+            const imgMarkdown = extractImageMarkdown(bestImage);
+            if (imgMarkdown) {
+              imageContent += imgMarkdown;
+            }
+          }
+        });
+      }
+
+      // Process the main content to extract text and inline images
+      let mainContent = processNode(contentElement);
+
+      // Combine main content and image content
+      let content = mainContent;
+
+      // If we have image content but it's not already in the main content, append it
+      if (imageContent && !content.includes(imageContent)) {
+        content += imageContent;
+      }
+
+      // Clean up the content
+      content = content.trim();
+      content = content.replace(/\n{3,}/g, '\n\n'); // Normalize consecutive newlines
+
+      if (content) {
+        messages.push({
+          role: role,
+          content: content,
+          index: index
+        });
+
+        if (role === 'user') {
+          userMessageCount++;
+        } else if (role === 'assistant') {
+          assistantMessageCount++;
+        }
+      }
+    });
+
+    console.log(`Extracted ${messages.length} messages: ${userMessageCount} user, ${assistantMessageCount} assistant`);
+    console.log(`Found ${processedImageSrcs.size} unique images`);
+
+    return {
+      messages: messages,
+      stats: {
+        userCount: userMessageCount,
+        assistantCount: assistantMessageCount,
+        imageCount: processedImageSrcs.size
+      }
+    };
+  }
+
+  // Convert markdown to HTML with improved LaTeX handling
+  function convertMarkdownToHTML(markdown) {
+    // Create wrapper elements for HTML structure
+    const wrapMessage = (content, role) => {
+      return `<div class="${role}">${content}</div>`;
+    };
+
+    // Extract user and assistant messages
+    const parts = markdown.split(/^## (User|Assistant)\s*$/gm);
+    let html = '';
+
+    // Process each message
+    for (let i = 1; i < parts.length; i += 2) {
+      if (i + 1 < parts.length) {
+        const role = parts[i].trim().toLowerCase();
+        const content = parts[i + 1].trim();
+
+        // Parse the markdown content
+        let messageHtml = convertMessageContent(content);
+
+        // Wrap the message in a div with the appropriate role class
+        html += wrapMessage(messageHtml, role === 'user' ? 'user' : 'assistant');
       }
     }
-    // Ordered lists
-    else if (lines[i].match(/^\d+\. (.+)$/)) {
-      if (!inList) {
-        lines[i] = '<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
-        inList = true;
-        listType = 'ol';
-      } else if (listType === 'ol') {
-        lines[i] = '<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
-      } else {
-        lines[i] = '</ul>\n<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
-        listType = 'ol';
+
+    // Create the complete HTML document
+    const htmlTemplate = createHtmlTemplate(html);
+    return htmlTemplate;
+  }
+
+  // Helper function to convert message content from markdown to HTML
+  function convertMessageContent(content) {
+    // 1. Extract and temporarily replace code blocks and inline code with placeholders
+    let codeBlocks = [];
+    content = content.replace(/```([a-zA-Z0-9]*)\n([\s\S]*?)\n?```/g, (match, lang, code) => {
+      const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
+      codeBlocks.push({ lang, code });
+      return placeholder;
+    });
+
+    let inlineCodes = [];
+    content = content.replace(/`([^`]+)`/g, (match, code) => {
+      const placeholder = `INLINE_CODE_${inlineCodes.length}`;
+      inlineCodes.push(code);
+      return placeholder;
+    });
+
+    // 2. Extract and temporarily replace LaTeX with placeholders
+    let latexDisplays = [];
+    content = content.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+      const placeholder = `LATEX_DISPLAY_${latexDisplays.length}`;
+      latexDisplays.push(latex);
+      return placeholder;
+    });
+
+    let latexInlines = [];
+    // Use a more specific regex for inline LaTeX to avoid false positives
+    content = content.replace(/(?<!\$)\$([^\n$]+?)\$(?!\$)/g, (match, latex) => {
+      const placeholder = `LATEX_INLINE_${latexInlines.length}`;
+      latexInlines.push(latex);
+      return placeholder;
+    });
+
+    // 3. Process regular markdown to HTML
+    let html = content
+      // Replace headings
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
+      .replace(/^##### (.+)$/gm, '<h5>$1</h5>')
+      .replace(/^###### (.+)$/gm, '<h6>$1</h6>');
+
+    // Replace images with clean src to avoid ${src} errors
+    html = html.replace(/!\[(.*?)\]\((.*?)\)( *<!-- .*? -->)?/g, (match, alt, src) => {
+      const cleanSrc = src.replace(/\${.*?}/g, '');
+      return `<img src="${cleanSrc}" alt="${alt}" style="max-width:100%">`;
+    });
+
+    // Replace links
+    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+    // Replace emphasis
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+    // Handle lists
+    let inList = false;
+    let listType = '';
+    const lines = html.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      // Unordered lists
+      if (lines[i].match(/^- (.+)$/)) {
+        if (!inList) {
+          lines[i] = '<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
+          inList = true;
+          listType = 'ul';
+        } else if (listType === 'ul') {
+          lines[i] = '<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
+        } else {
+          lines[i] = '</ol>\n<ul>\n<li>' + lines[i].replace(/^- (.+)$/, '$1') + '</li>';
+          listType = 'ul';
+        }
+      }
+      // Ordered lists
+      else if (lines[i].match(/^\d+\. (.+)$/)) {
+        if (!inList) {
+          lines[i] = '<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
+          inList = true;
+          listType = 'ol';
+        } else if (listType === 'ol') {
+          lines[i] = '<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
+        } else {
+          lines[i] = '</ul>\n<ol>\n<li>' + lines[i].replace(/^\d+\. (.+)$/, '$1') + '</li>';
+          listType = 'ol';
+        }
+      }
+      // End lists when encountering a non-list item
+      else if (inList && lines[i].trim() !== '') {
+        lines[i] = (listType === 'ul' ? '</ul>' : '</ol>') + '\n' + lines[i];
+        inList = false;
       }
     }
-    // End lists when encountering a non-list item
-    else if (inList && lines[i].trim() !== '') {
-      lines[i] = (listType === 'ul' ? '</ul>' : '</ol>') + '\n' + lines[i];
-      inList = false;
+
+    // Close any remaining lists
+    if (inList) {
+      lines.push(listType === 'ul' ? '</ul>' : '</ol>');
     }
+
+    html = lines.join('\n');
+
+    // Now we restore code blocks BEFORE paragraph replacements to avoid wrapping
+    // code blocks in <p> tags
+
+    // 4. Restore code blocks with proper HTML and escaping
+    for (let i = 0; i < codeBlocks.length; i++) {
+      const { lang, code } = codeBlocks[i];
+
+      // Escape HTML in code blocks for security
+      const escapedCode = code.replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+      // Only add language class if a language is specified
+      const langClass = lang ? `language-${lang}` : '';
+
+      // Create a pretty language label for the UI
+      const displayLang = lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : 'Plain text';
+
+      // Create the code block with a language attribute for the label
+      html = html.replace(
+        `CODE_BLOCK_${i}`,
+        `<pre data-language="${displayLang}"><code class="${langClass}">${escapedCode}</code></pre>`
+      );
+    }
+
+    // Restore inline code with proper HTML and escaping
+    for (let i = 0; i < inlineCodes.length; i++) {
+      const escapedCode = inlineCodes[i].replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+      html = html.replace(`INLINE_CODE_${i}`, `<code>${escapedCode}</code>`);
+    }
+
+    // NOW do paragraph replacements AFTER code blocks are restored
+    // Replace paragraphs (do this last to avoid messing up other elements)
+    html = html.replace(/\n\n([^<].*?)\n\n/g, '\n<p>$1</p>\n');
+
+    // Clean any leftover newlines
+    html = html.replace(/\n\n+/g, '\n\n');
+
+    // 5. Restore LaTeX with special CSS classes for easy identification
+    for (let i = 0; i < latexDisplays.length; i++) {
+      let latex = latexDisplays[i];
+
+      // Fix common LaTeX issues
+      latex = fixLatexSyntax(latex);
+
+      html = html.replace(
+        `LATEX_DISPLAY_${i}`,
+        `<div class="math-display" data-latex-original="${escapeHtml(latex)}">\\[${latex}\\]</div>`
+      );
+    }
+
+    for (let i = 0; i < latexInlines.length; i++) {
+      let latex = latexInlines[i];
+
+      // Fix common LaTeX issues
+      latex = fixLatexSyntax(latex);
+
+      html = html.replace(
+        `LATEX_INLINE_${i}`,
+        `<span class="math-inline" data-latex-original="${escapeHtml(latex)}">\\(${latex}\\)</span>`
+      );
+    }
+
+    return html;
   }
-  
-  // Close any remaining lists
-  if (inList) {
-    lines.push(listType === 'ul' ? '</ul>' : '</ol>');
+
+  // Helper function to fix common LaTeX syntax issues
+  function fixLatexSyntax(latex) {
+    // Fix unmatched \left and \right
+    let fixed = latex;
+
+    // Count opening and closing delimiters
+    const leftCount = (fixed.match(/\\left/g) || []).length;
+    const rightCount = (fixed.match(/\\right/g) || []).length;
+
+    // Fix unmatched \left
+    if (leftCount > rightCount) {
+      for (let i = 0; i < leftCount - rightCount; i++) {
+        fixed += ' \\right.';
+      }
+    }
+
+    // Fix unmatched \right
+    if (rightCount > leftCount) {
+      fixed = '\\left. ' + fixed;
+    }
+
+    // Fix common vector notation
+    fixed = fixed.replace(/\\vec\s*([a-zA-Z])\b(?![{])/g, '\\vec{$1}');
+
+    // Fix common \frac syntax
+    fixed = fixed.replace(/\\frac\s*([a-zA-Z0-9]+)\s*([a-zA-Z0-9]+)/g, '\\frac{$1}{$2}');
+
+    // Balance braces
+    let openBraces = 0;
+    for (let i = 0; i < fixed.length; i++) {
+      if (fixed[i] === '{') openBraces++;
+      if (fixed[i] === '}') openBraces--;
+    }
+
+    // Add missing closing braces
+    if (openBraces > 0) {
+      fixed += '}'.repeat(openBraces);
+    }
+
+    // Add missing opening braces
+    if (openBraces < 0) {
+      fixed = '{'.repeat(-openBraces) + fixed;
+    }
+
+    return fixed;
   }
-  
-  html = lines.join('\n');
-  
-  // Now we restore code blocks BEFORE paragraph replacements to avoid wrapping
-  // code blocks in <p> tags
-  
-  // 4. Restore code blocks with proper HTML and escaping
-  for (let i = 0; i < codeBlocks.length; i++) {
-    const {lang, code} = codeBlocks[i];
-    
-    // Escape HTML in code blocks for security
-    const escapedCode = code.replace(/&/g, '&amp;')
+
+  // Helper function to escape HTML for attributes
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
-    
-    // Only add language class if a language is specified
-    const langClass = lang ? `language-${lang}` : '';
-    
-    // Create a pretty language label for the UI
-    const displayLang = lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : 'Plain text';
-    
-    // Create the code block with a language attribute for the label
-    html = html.replace(
-      `CODE_BLOCK_${i}`, 
-      `<pre data-language="${displayLang}"><code class="${langClass}">${escapedCode}</code></pre>`
-    );
   }
-  
-  // Restore inline code with proper HTML and escaping
-  for (let i = 0; i < inlineCodes.length; i++) {
-    const escapedCode = inlineCodes[i].replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-    
-    html = html.replace(`INLINE_CODE_${i}`, `<code>${escapedCode}</code>`);
-  }
-  
-  // NOW do paragraph replacements AFTER code blocks are restored
-  // Replace paragraphs (do this last to avoid messing up other elements)
-  html = html.replace(/\n\n([^<].*?)\n\n/g, '\n<p>$1</p>\n');
-  
-  // Clean any leftover newlines
-  html = html.replace(/\n\n+/g, '\n\n');
-  
-  // 5. Restore LaTeX with special CSS classes for easy identification
-  for (let i = 0; i < latexDisplays.length; i++) {
-    let latex = latexDisplays[i];
-    
-    // Fix common LaTeX issues
-    latex = fixLatexSyntax(latex);
-    
-    html = html.replace(
-      `LATEX_DISPLAY_${i}`, 
-      `<div class="math-display" data-latex-original="${escapeHtml(latex)}">\\[${latex}\\]</div>`
-    );
-  }
-  
-  for (let i = 0; i < latexInlines.length; i++) {
-    let latex = latexInlines[i];
-    
-    // Fix common LaTeX issues
-    latex = fixLatexSyntax(latex);
-    
-    html = html.replace(
-      `LATEX_INLINE_${i}`, 
-      `<span class="math-inline" data-latex-original="${escapeHtml(latex)}">\\(${latex}\\)</span>`
-    );
-  }
-  
-  return html;
-}
 
-// Helper function to fix common LaTeX syntax issues
-function fixLatexSyntax(latex) {
-  // Fix unmatched \left and \right
-  let fixed = latex;
-  
-  // Count opening and closing delimiters
-  const leftCount = (fixed.match(/\\left/g) || []).length;
-  const rightCount = (fixed.match(/\\right/g) || []).length;
-  
-  // Fix unmatched \left
-  if (leftCount > rightCount) {
-    for (let i = 0; i < leftCount - rightCount; i++) {
-      fixed += ' \\right.';
-    }
-  }
-  
-  // Fix unmatched \right
-  if (rightCount > leftCount) {
-    fixed = '\\left. ' + fixed;
-  }
-  
-  // Fix common vector notation
-  fixed = fixed.replace(/\\vec\s*([a-zA-Z])\b(?![{])/g, '\\vec{$1}');
-  
-  // Fix common \frac syntax
-  fixed = fixed.replace(/\\frac\s*([a-zA-Z0-9]+)\s*([a-zA-Z0-9]+)/g, '\\frac{$1}{$2}');
-  
-  // Balance braces
-  let openBraces = 0;
-  for (let i = 0; i < fixed.length; i++) {
-    if (fixed[i] === '{') openBraces++;
-    if (fixed[i] === '}') openBraces--;
-  }
-  
-  // Add missing closing braces
-  if (openBraces > 0) {
-    fixed += '}'.repeat(openBraces);
-  }
-  
-  // Add missing opening braces
-  if (openBraces < 0) {
-    fixed = '{'.repeat(-openBraces) + fixed;
-  }
-  
-  return fixed;
-}
-
-// Helper function to escape HTML for attributes
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
-// Function to create the complete HTML template
-function createHtmlTemplate(content) {
-  return `<!DOCTYPE html>
+  // Function to create the complete HTML template
+  function createHtmlTemplate(content) {
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1196,7 +1201,7 @@ function createHtmlTemplate(content) {
   </style>
 </head>
 <body>
-  <h1>ChatGPT Conversation</h1>
+  <h1>AI Chat Conversation</h1>
   <p>Exported on: ${new Date().toLocaleString()}</p>
   
   <div class="conversation-container">
@@ -1204,7 +1209,7 @@ function createHtmlTemplate(content) {
   </div>
   
   <div class="footer">
-    <p>Exported with ChatGPT Export Tool • ${new Date().toISOString().split('T')[0]}</p>
+    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}</p>
   </div>
 
   <script>
@@ -1359,193 +1364,194 @@ function createHtmlTemplate(content) {
   </script>
 </body>
 </html>`;
-}
+  }
 
-// Function to export the current conversation
-function exportCurrentConversation(formats, sendResponse) {
-  try {
-    console.log('Starting export of current conversation...');
-    
-    // Reset the processed images set
-    processedImageSrcs.clear();
-    
-    // Extract the conversation
-    const result = extractMessages();
-    console.log('Extract messages result:', result ? 'Success' : 'Failed');
-    
-    if (!result) {
-      console.error('Failed to extract conversation - no result returned');
-      sendResponse({ success: false, error: 'Failed to extract conversation' });
-      return;
-    }
-    
-    const { messages, stats } = result;
-    console.log(`Extracted ${messages.length} messages with ${stats.imageCount} images`);
-    
-    // Generate markdown
-    let markdown = `# ChatGPT Conversation\n\nExported on: ${new Date().toLocaleString()}\n\n`;
-    
-    messages.forEach(message => {
-      const roleTitle = message.role === 'user' ? 'User' : 'ChatGPT';
-      
-      // Protect code blocks and inline code from LaTeX processing
-      let content = message.content;
-      
-      // First, temporarily mark code blocks to prevent modifying them
-      let codeBlocks = [];
-      content = content.replace(/```[\s\S]*?```/g, (match) => {
-        const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
-        codeBlocks.push(match);
-        return placeholder;
+  // Function to export the current conversation
+  function exportCurrentConversation(formats, sendResponse) {
+    try {
+      console.log('Starting export of current conversation...');
+
+      // Reset the processed images set
+      processedImageSrcs.clear();
+
+      // Extract the conversation
+      const result = extractMessages();
+      console.log('Extract messages result:', result ? 'Success' : 'Failed');
+
+      if (!result) {
+        console.error('Failed to extract conversation - no result returned');
+        sendResponse({ success: false, error: 'Failed to extract conversation' });
+        return;
+      }
+
+      const { messages, stats } = result;
+      console.log(`Extracted ${messages.length} messages with ${stats.imageCount} images`);
+
+      // Generate markdown
+      let markdown = `# AI Chat Conversation\n\nExported on: ${new Date().toLocaleString()}\n\n`;
+
+      messages.forEach(message => {
+        const roleTitle = message.role === 'user' ? 'User' : 'Assistant';
+
+        // Protect code blocks and inline code from LaTeX processing
+        let content = message.content;
+
+        // First, temporarily mark code blocks to prevent modifying them
+        let codeBlocks = [];
+        content = content.replace(/```[\s\S]*?```/g, (match) => {
+          const placeholder = `CODE_BLOCK_${codeBlocks.length}`;
+          codeBlocks.push(match);
+          return placeholder;
+        });
+
+        // Now mark inline code to protect it as well
+        let inlineCodes = [];
+        content = content.replace(/`[^`]+`/g, (match) => {
+          const placeholder = `INLINE_CODE_${inlineCodes.length}`;
+          inlineCodes.push(match);
+          return placeholder;
+        });
+
+        // Now restore all code blocks and inline codes
+        codeBlocks.forEach((block, i) => {
+          content = content.replace(`CODE_BLOCK_${i}`, block);
+        });
+
+        inlineCodes.forEach((code, i) => {
+          content = content.replace(`INLINE_CODE_${i}`, code);
+        });
+
+        markdown += `## ${roleTitle}\n\n${content}\n\n`;
       });
-      
-      // Now mark inline code to protect it as well
-      let inlineCodes = [];
-      content = content.replace(/`[^`]+`/g, (match) => {
-        const placeholder = `INLINE_CODE_${inlineCodes.length}`;
-        inlineCodes.push(match);
-        return placeholder;
-      });
-      
-      // Now restore all code blocks and inline codes
-      codeBlocks.forEach((block, i) => {
-        content = content.replace(`CODE_BLOCK_${i}`, block);
-      });
-      
-      inlineCodes.forEach((code, i) => {
-        content = content.replace(`INLINE_CODE_${i}`, code);
-      });
-      
-      markdown += `## ${roleTitle}\n\n${content}\n\n`;
-    });
-    
-    console.log('Generated markdown content:', markdown.substring(0, 100) + '...');
-    
-    // Use a Promise chain to handle downloads sequentially
-    let downloadPromise = Promise.resolve();
-    
-    // Handle Markdown export
-    if (formats.markdown) {
-      downloadPromise = downloadPromise.then(() => {
-        return new Promise((resolve) => {
-          console.log('Creating markdown download...');
-          const blob = new Blob([markdown], { type: 'text/markdown' });
-          const url = URL.createObjectURL(blob);
-          
-          // Create filename with timestamp
-          const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-          const filename = `chatgpt-conversation-${timestamp}.md`;
-          
-          // Send download request to background script
-          chrome.runtime.sendMessage({
-            action: 'downloadFile',
-            url: url,
-            filename: filename,
-            saveAs: true
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('Error sending download request:', chrome.runtime.lastError);
-            } else if (!response || !response.success) {
-              console.error('Markdown download error:', response ? response.error : 'Unknown error');
-            } else {
-              console.log('Markdown download initiated with ID:', response.downloadId);
-            }
-            // Clean up object URL after a short delay to ensure it's used
-            setTimeout(() => {
-              URL.revokeObjectURL(url);
-            }, 1000);
-            resolve();
+
+      console.log('Generated markdown content:', markdown.substring(0, 100) + '...');
+
+      // Use a Promise chain to handle downloads sequentially
+      let downloadPromise = Promise.resolve();
+
+      // Handle Markdown export
+      if (formats.markdown) {
+        downloadPromise = downloadPromise.then(() => {
+          return new Promise((resolve) => {
+            console.log('Creating markdown download...');
+            const blob = new Blob([markdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+
+            // Create filename with timestamp
+            const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
+            const filename = `ai-chat-conversation-${timestamp}.md`;
+
+            // Send download request to background script
+            chrome.runtime.sendMessage({
+              action: 'downloadFile',
+              url: url,
+              filename: filename,
+              saveAs: true
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.error('Error sending download request:', chrome.runtime.lastError);
+              } else if (!response || !response.success) {
+                console.error('Markdown download error:', response ? response.error : 'Unknown error');
+              } else {
+                console.log('Markdown download initiated with ID:', response.downloadId);
+              }
+              // Clean up object URL after a short delay to ensure it's used
+              setTimeout(() => {
+                URL.revokeObjectURL(url);
+              }, 1000);
+              resolve();
+            });
           });
         });
-      });
-    }
-    
-    // Handle HTML export
-    if (formats.html) {
-      downloadPromise = downloadPromise.then(() => {
-        return new Promise((resolve) => {
-          console.log('Creating HTML download...');
-          const html = convertMarkdownToHTML(markdown);
-          const blob = new Blob([html], { type: 'text/html' });
-          const url = URL.createObjectURL(blob);
-          
-          // Create filename with timestamp
-          const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-          const filename = `chatgpt-conversation-${timestamp}.html`;
-          
-          // Send download request to background script
-          chrome.runtime.sendMessage({
-            action: 'downloadFile',
-            url: url,
-            filename: filename,
-            saveAs: true
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('Error sending download request:', chrome.runtime.lastError);
-            } else if (!response || !response.success) {
-              console.error('HTML download error:', response ? response.error : 'Unknown error');
-            } else {
-              console.log('HTML download initiated with ID:', response.downloadId);
-            }
-            // Clean up object URL after a short delay to ensure it's used
-            setTimeout(() => {
-              URL.revokeObjectURL(url);
-            }, 1000);
-            resolve();
+      }
+
+      // Handle HTML export
+      if (formats.html) {
+        downloadPromise = downloadPromise.then(() => {
+          return new Promise((resolve) => {
+            console.log('Creating HTML download...');
+            const html = convertMarkdownToHTML(markdown);
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+
+            // Create filename with timestamp
+            const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
+            const filename = `ai-chat-conversation-${timestamp}.html`;
+
+            // Send download request to background script
+            chrome.runtime.sendMessage({
+              action: 'downloadFile',
+              url: url,
+              filename: filename,
+              saveAs: true
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.error('Error sending download request:', chrome.runtime.lastError);
+              } else if (!response || !response.success) {
+                console.error('HTML download error:', response ? response.error : 'Unknown error');
+              } else {
+                console.log('HTML download initiated with ID:', response.downloadId);
+              }
+              // Clean up object URL after a short delay to ensure it's used
+              setTimeout(() => {
+                URL.revokeObjectURL(url);
+              }, 1000);
+              resolve();
+            });
           });
         });
-      });
-    }
-    
-    // Send success response after all downloads have been processed
-    downloadPromise.then(() => {
-      console.log('Export process completed successfully');
-      sendResponse({
-        success: true,
-        messageCount: messages.length,
-        imageCount: stats.imageCount
-      });
-    }).catch((err) => {
-      console.error('Download promise chain error:', err);
-      sendResponse({ success: false, error: err.message || 'Error during download process' });
-    });
-    
-  } catch (error) {
-    console.error('Error exporting conversation:', error);
-    sendResponse({ success: false, error: error.message || 'Unknown export error' });
-  }
-  
-  // Must return true to indicate we'll send the response asynchronously
-  return true;
-}
+      }
 
-// Function to export all conversations
-function exportAllConversations(formats, sendResponse) {
-  try {
-    console.log('Starting export of all conversations (currently in development)...');
-    
-    // This is a more complex feature that would require navigating to each conversation
-    // For now, we'll just simulate the functionality with a response
-    setTimeout(() => {
-      console.log('Returning placeholder response for exportAll');
-      sendResponse({
-        success: true,
-        conversationCount: 1, // For testing
-        message: "This feature is under development. Currently only exporting the current conversation."
+      // Send success response after all downloads have been processed
+      downloadPromise.then(() => {
+        console.log('Export process completed successfully');
+        sendResponse({
+          success: true,
+          messageCount: messages.length,
+          imageCount: stats.imageCount
+        });
+      }).catch((err) => {
+        console.error('Download promise chain error:', err);
+        sendResponse({ success: false, error: err.message || 'Error during download process' });
       });
-    }, 500);
-    
-    /* In a full implementation, this would involve:
-     * 1. Finding the conversation list
-     * 2. Iterating through each conversation link
-     * 3. Opening each conversation and extracting contents
-     * 4. Creating a zip file with all conversations
-     */
-  } catch (error) {
-    console.error('Error in exportAllConversations:', error);
-    sendResponse({ success: false, error: error.message || 'Unknown error in export all' });
+
+    } catch (error) {
+      console.error('Error exporting conversation:', error);
+      sendResponse({ success: false, error: error.message || 'Unknown export error' });
+    }
+
+    // Must return true to indicate we'll send the response asynchronously
+    return true;
   }
-  
-  // Must return true to indicate we'll send the response asynchronously
-  return true;
+
+  // Function to export all conversations
+  function exportAllConversations(formats, sendResponse) {
+    try {
+      console.log('Starting export of all conversations (currently in development)...');
+
+      // This is a more complex feature that would require navigating to each conversation
+      // For now, we'll just simulate the functionality with a response
+      setTimeout(() => {
+        console.log('Returning placeholder response for exportAll');
+        sendResponse({
+          success: true,
+          conversationCount: 1, // For testing
+          message: "This feature is under development. Currently only exporting the current conversation."
+        });
+      }, 500);
+
+      /* In a full implementation, this would involve:
+       * 1. Finding the conversation list
+       * 2. Iterating through each conversation link
+       * 3. Opening each conversation and extracting contents
+       * 4. Creating a zip file with all conversations
+       */
+    } catch (error) {
+      console.error('Error in exportAllConversations:', error);
+      sendResponse({ success: false, error: error.message || 'Unknown error in export all' });
+    }
+
+    // Must return true to indicate we'll send the response asynchronously
+    return true;
+  }
 }
