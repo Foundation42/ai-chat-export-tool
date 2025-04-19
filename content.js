@@ -328,27 +328,44 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
     // Use platform-specific extractor
     if (platform === 'claude' && typeof window.ClaudeExtractor !== 'undefined') {
       console.log("Using Claude-specific extraction logic");
-      const claudeResult = window.ClaudeExtractor.extractMessages();
-      
-      // If extraction failed, return null so we can fall back to default
-      if (!claudeResult) {
-        console.log("Claude extraction failed, falling back to default extraction");
-        return null;
+      try {
+        const claudeResult = window.ClaudeExtractor.extractMessages();
+        
+        // If extraction failed, log but continue to fallback extraction
+        if (!claudeResult) {
+          console.log("Claude extraction failed, falling back to default extraction");
+        } else {
+          return claudeResult;
+        }
+      } catch (error) {
+        console.error("Error in Claude extractor:", error);
+        console.log("Claude extraction failed with error, falling back to default extraction");
       }
       
-      return claudeResult;
+      // If we reach here, Claude extraction failed, continuing with generic extraction
     }
     
     // For ChatGPT or fallback to default extraction for other platforms
 
     // Find the main thread in the DOM
     const threadSelectors = [
+      // ChatGPT selectors
       'div[id="__next"] main', // Main structure in newer versions
       'main div.flex.flex-col',
       '[role="presentation"]',
       'main .relative',
       'div#__next div.overflow-hidden', // Common wrapper
-      'div.flex.flex-col.items-center.text-sm.h-full' // Another common pattern
+      'div.flex.flex-col.items-center.text-sm.h-full', // Another common pattern
+      
+      // Claude selectors (for fallback)
+      'div[role="region"]',
+      '.flex.min-h-screen',
+      'main',
+      '.chat-container',
+      '#__next main',
+      '.chat-view',
+      'div[class*="chat-view"]',
+      'div[class*="conversation"]'
     ];
 
     let mainThread = null;
@@ -368,12 +385,27 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
     // Find all conversation turns - these are messages from either user or assistant
     const turnSelectors = [
+      // ChatGPT selectors
       '[data-testid^="conversation-turn-"]', // Modern GPT-4 structure
       'article[data-message-author-role]', // Another common pattern
       'div[data-message-author-role]', // Alternative
       'div.w-full.text-token-text-primary', // Older versions
       '.group[data-group-pos]',
-      'div.text-base' // Fallback
+      'div.text-base', // Fallback
+      
+      // Claude selectors for fallback
+      '.font-claude-message',
+      '.whitespace-normal.break-words',
+      'p.whitespace-pre-wrap',
+      'div.min-h-full > div > p',
+      '[style*="whitespace"][style*="pre-wrap"]',
+      'div[data-is-streaming] > div',
+      'div > .text-xl',
+      '[data-test-render-count]',
+      'div[class*="message"]',
+      'div[class*="chat-message"]',
+      'div[class*="chat-turn"]',
+      'div[class*="message-content"]'
     ];
 
     let conversationTurns = [];
@@ -417,18 +449,20 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
         // Method 2: Look for specific elements or text
         const h5 = turn.querySelector('h5, h6');
         if (h5 && h5.textContent) {
-          if (h5.textContent.toLowerCase().includes('you said')) {
+          if (h5.textContent.toLowerCase().includes('you said') || 
+              h5.textContent.toLowerCase().includes('human:')) {
             role = 'user';
           } else if (h5.textContent.toLowerCase().includes('chatgpt') ||
-            h5.textContent.toLowerCase().includes('assistant')) {
+                    h5.textContent.toLowerCase().includes('assistant') ||
+                    h5.textContent.toLowerCase().includes('claude')) {
             role = 'assistant';
           }
         }
 
         // Method 3: Check for icons
         if (role === 'unknown') {
-          const userIcon = turn.querySelector('img[alt*="User"], img[alt*="user"]');
-          const botIcon = turn.querySelector('img[alt*="ChatGPT"], img[alt*="GPT"], img[alt*="Assistant"]');
+          const userIcon = turn.querySelector('img[alt*="User"], img[alt*="user"], img[alt*="Human"]');
+          const botIcon = turn.querySelector('img[alt*="ChatGPT"], img[alt*="GPT"], img[alt*="Assistant"], img[alt*="Claude"], img[alt*="Bot"]');
 
           if (userIcon && !botIcon) {
             role = 'user';
@@ -441,20 +475,37 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
         if (role === 'unknown') {
           // User messages often have these classes
           if (turn.classList.contains('dark:bg-gray-800') ||
+            turn.classList.contains('bg-token-message-surface') ||
             turn.querySelector('.bg-token-message-surface') ||
-            Array.from(turn.classList).some(c => c.includes('user'))) {
+            Array.from(turn.classList).some(c => c.includes('user')) ||
+            Array.from(turn.classList).some(c => c.includes('human'))) {
             role = 'user';
           }
           // Assistant messages often have these classes
           else if (turn.classList.contains('bg-gray-50') ||
             turn.classList.contains('markdown') ||
-            Array.from(turn.classList).some(c => c.includes('assistant'))) {
+            turn.classList.contains('font-claude-message') ||
+            Array.from(turn.classList).some(c => c.includes('assistant')) ||
+            Array.from(turn.classList).some(c => c.includes('claude')) ||
+            Array.from(turn.classList).some(c => c.includes('bot'))) {
             role = 'assistant';
           }
         }
 
-        // Method 5: Alternating pattern (fallback)
+        // Method 5: Check content patterns
         if (role === 'unknown') {
+          const contentText = turn.textContent.toLowerCase().trim();
+          if (contentText.includes("i am claude") || 
+              contentText.includes("i am an ai assistant") ||
+              contentText.includes("as an ai") ||
+              contentText.match(/claude (3\.5|opus|sonnet|haiku)/i)) {
+            role = 'assistant';
+          }
+        }
+        
+        // Method 6: Alternating pattern (fallback)
+        if (role === 'unknown') {
+          // In most chat interfaces, conversations alternate between user and assistant
           role = (index % 2 === 0) ? 'user' : 'assistant';
         }
       }

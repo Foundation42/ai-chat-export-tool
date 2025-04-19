@@ -184,9 +184,28 @@ function extractClaudeMessages() {
     console.log("Starting Claude conversation export...");
     claudeProcessedImageSrcs.clear();
     
-    // Find the main conversation container
-    const mainContainer = document.querySelector('div[role="region"]') || 
-                         document.querySelector('.flex.min-h-screen');
+    // Find the main conversation container with multiple fallback options
+    const containerSelectors = [
+        'div[role="region"]',
+        '.flex.min-h-screen',
+        'main',
+        '.chat-container',
+        '#__next main',
+        '.chat-view',
+        'div[class*="chat-view"]',
+        'div[class*="conversation"]',
+        'body', // Last resort - search the entire document
+    ];
+    
+    let mainContainer = null;
+    for (const selector of containerSelectors) {
+        const element = document.querySelector(selector);
+        if (element) {
+            mainContainer = element;
+            console.log(`Found Claude container using selector: ${selector}`);
+            break;
+        }
+    }
     
     if (!mainContainer) {
         console.error('Could not find the Claude conversation container.');
@@ -238,7 +257,20 @@ function extractClaudeMessages() {
             'div.min-h-full > div > p',
             '[style*="whitespace"][style*="pre-wrap"]',
             'div[data-is-streaming] > div',
-            'div > .text-xl'
+            'div > .text-xl',
+            // Additional selectors for various Claude UI versions
+            'div[class*="message"]',
+            'div[class*="chat-message"]',
+            'div[class*="chat-turn"]',
+            'div[class*="message-content"]',
+            'div[class*="bubble"]',
+            'div[class*="message-bubble"]',
+            'div.markdown',
+            'div.prose',
+            'div > div > p',
+            // More generic selectors as fallbacks
+            'p',
+            'div > p'
         ];
         
         // Try each pattern
@@ -275,8 +307,37 @@ function extractClaudeMessages() {
     }
     
     if (messageBlocks.length === 0) {
-        console.error('Could not find any Claude messages. The page structure might have changed.');
-        return null;
+        console.error('Could not find Claude messages with specific selectors, trying generic approach');
+        
+        // Last ditch effort: Find any div with substantial text content
+        // We're going to extract all divs with at least 20 characters of text
+        // and sort them by length (assuming longer ones are more likely to be messages)
+        const allElements = document.querySelectorAll('div, p');
+        const textElements = Array.from(allElements).filter(el => {
+            // Must have reasonable text content
+            return el.textContent && el.textContent.trim().length > 20 &&
+                // But not be a common UI element 
+                !el.querySelector('script') &&
+                !el.querySelector('style') &&
+                !el.classList.contains('nav') &&
+                !el.classList.contains('header') &&
+                !el.classList.contains('footer') &&
+                // And not have too many child elements (suggesting it's a container, not a message)
+                el.children.length < 10;
+        });
+        
+        // Sort by text length (descending) - longer elements are more likely to be messages
+        textElements.sort((a, b) => b.textContent.trim().length - a.textContent.trim().length);
+        
+        // Take top elements (max 20)
+        const maxElements = Math.min(20, textElements.length);
+        if (maxElements >= 2) {
+            console.log(`Found ${maxElements} potential Claude messages using generic text extraction`);
+            messageBlocks = textElements.slice(0, maxElements);
+        } else {
+            console.error('Could not find any Claude messages. The page structure might have changed.');
+            return null;
+        }
     }
     
     console.log(`Found ${messageBlocks.length} Claude message blocks`);
