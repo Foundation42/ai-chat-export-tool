@@ -295,9 +295,43 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
     }
   }
 
+  // Detect which AI platform we're on
+  function detectAIPlatform() {
+    const url = window.location.href.toLowerCase();
+    
+    if (url.includes('claude.ai')) {
+      return 'claude';
+    } else if (url.includes('chat.openai.com') || url.includes('chatgpt.com')) {
+      return 'chatgpt';
+    } else if (url.includes('gemini.google.com')) {
+      return 'gemini';
+    }
+    
+    // Fallback detection through page elements
+    if (document.querySelector('[data-theme="claude"]') || 
+        document.querySelector('.font-claude-message')) {
+      return 'claude';
+    }
+    
+    // Default to ChatGPT extraction if we can't determine
+    return 'chatgpt';
+  }
+
   // Find and extract messages from the conversation thread
   function extractMessages() {
     console.log("Starting AI chat conversation export...");
+    
+    // Detect the current platform
+    const platform = detectAIPlatform();
+    console.log(`Detected AI platform: ${platform}`);
+    
+    // Use platform-specific extractor
+    if (platform === 'claude' && typeof window.ClaudeExtractor !== 'undefined') {
+      console.log("Using Claude-specific extraction logic");
+      return window.ClaudeExtractor.extractMessages();
+    }
+    
+    // For ChatGPT or fallback to default extraction for other platforms
 
     // Find the main thread in the DOM
     const threadSelectors = [
@@ -539,13 +573,18 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
   // Convert markdown to HTML with improved LaTeX handling
   function convertMarkdownToHTML(markdown) {
+    // Get platform info
+    const platform = detectAIPlatform();
+    const isClaudeConversation = platform === 'claude';
+    
     // Create wrapper elements for HTML structure
     const wrapMessage = (content, role) => {
       return `<div class="${role}">${content}</div>`;
     };
 
     // Extract user and assistant messages
-    const parts = markdown.split(/^## (User|Assistant)\s*$/gm);
+    // Create a regex pattern that matches standard headers and platform-specific headers
+    const parts = markdown.split(/^## (User|Assistant|Human|Claude)\s*$/gm);
     let html = '';
 
     // Process each message
@@ -557,8 +596,14 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
         // Parse the markdown content
         let messageHtml = convertMessageContent(content);
 
+        // Determine the role for the message
+        let messageRole = 'assistant';
+        if (role === 'user' || role === 'human') {
+          messageRole = 'user';
+        }
+        
         // Wrap the message in a div with the appropriate role class
-        html += wrapMessage(messageHtml, role === 'user' ? 'user' : 'assistant');
+        html += wrapMessage(messageHtml, messageRole);
       }
     }
 
@@ -801,6 +846,10 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
   // Function to create the complete HTML template
   function createHtmlTemplate(content) {
+    // Get platform info for the title and other customizations
+    const platform = detectAIPlatform();
+    const isClaudeConversation = platform === 'claude';
+    const result = { claudeVersion: isClaudeConversation ? 'Claude' : null }; // Default values
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1201,7 +1250,7 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   </style>
 </head>
 <body>
-  <h1>AI Chat Conversation</h1>
+  <h1>${isClaudeConversation && result.claudeVersion ? result.claudeVersion + ' Conversation' : 'AI Chat Conversation'}</h1>
   <p>Exported on: ${new Date().toLocaleString()}</p>
   
   <div class="conversation-container">
@@ -1209,7 +1258,7 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
   </div>
   
   <div class="footer">
-    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}</p>
+    <p>Exported with AI Chat Export Tool by Social Magnetics • ${new Date().toISOString().split('T')[0]}${isClaudeConversation ? ' • Platform: ' + (result.claudeVersion || 'Claude') : ''}</p>
   </div>
 
   <script>
@@ -1388,10 +1437,25 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
       console.log(`Extracted ${messages.length} messages with ${stats.imageCount} images`);
 
       // Generate markdown
-      let markdown = `# AI Chat Conversation\n\nExported on: ${new Date().toLocaleString()}\n\n`;
+      const platform = detectAIPlatform();
+      const isClaudeConversation = platform === 'claude';
+      
+      // Set appropriate title based on platform and data
+      let title = '# AI Chat Conversation';
+      let userLabel = 'User';
+      let assistantLabel = 'Assistant';
+      
+      // Handle Claude specific labels and info
+      if (isClaudeConversation && result.claudeVersion) {
+        title = `# ${result.claudeVersion} Conversation`;
+        userLabel = 'Human';
+        assistantLabel = result.claudeVersion || 'Claude';
+      }
+      
+      let markdown = `${title}\n\nExported on: ${new Date().toLocaleString()}\n\n`;
 
       messages.forEach(message => {
-        const roleTitle = message.role === 'user' ? 'User' : 'Assistant';
+        const roleTitle = message.role === 'user' ? userLabel : assistantLabel;
 
         // Protect code blocks and inline code from LaTeX processing
         let content = message.content;
@@ -1439,7 +1503,8 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
             // Create filename with timestamp
             const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-            const filename = `ai-chat-conversation-${timestamp}.md`;
+            const platformPrefix = isClaudeConversation ? 'claude' : 'ai-chat';
+            const filename = `${platformPrefix}-conversation-${timestamp}.md`;
 
             // Send download request to background script
             chrome.runtime.sendMessage({
@@ -1476,7 +1541,8 @@ if (typeof window.SocialMagneticsAIChatExportTool === 'undefined') {
 
             // Create filename with timestamp
             const timestamp = new Date().toISOString().replace(/[:]/g, '-').replace('T', '_').slice(0, 19);
-            const filename = `ai-chat-conversation-${timestamp}.html`;
+            const platformPrefix = isClaudeConversation ? 'claude' : 'ai-chat';
+            const filename = `${platformPrefix}-conversation-${timestamp}.html`;
 
             // Send download request to background script
             chrome.runtime.sendMessage({

@@ -36,7 +36,7 @@
         "https://claude.ai/*",
         "https://gemini.google.com/*"
       ],
-      "js": ["content.js"]
+      "js": ["claude-extractor.js", "content.js"]
     }
   ],
   "author": "Social Magnetics",
