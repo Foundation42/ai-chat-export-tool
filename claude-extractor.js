@@ -179,10 +179,31 @@ function processClaudeNode(node) {
     }
 }
 
-// Extract Claude conversation using the proven working approach
-function extractClaudeMessages() {
+// Extract Claude conversation using improved approach with better debug
+function extractClaudeMessages(debug = false) {
     console.log("Starting Claude conversation export...");
     claudeProcessedImageSrcs.clear();
+    
+    // Enable verbose mode for debugging
+    const verbose = debug || (window.location.href.includes('debug=true'));
+    
+    if (verbose) {
+        console.log("VERBOSE MODE: Claude extractor running with detailed logs");
+    }
+    
+    // Try to detect which version of the Claude UI we're using
+    let claudeUiVersion = 'unknown';
+    
+    // Check for identifying DOM elements to determine UI version
+    if (document.querySelector('.font-claude-message')) {
+        claudeUiVersion = 'classic';
+    } else if (document.querySelector('[data-message-author-role]')) {
+        claudeUiVersion = 'modern';
+    } else if (document.querySelector('.group\\/conversation-turn')) {
+        claudeUiVersion = 'new-chat';
+    }
+    
+    console.log(`Detected Claude UI version: ${claudeUiVersion}`);
     
     // Find the main conversation container with multiple fallback options
     const containerSelectors = [
@@ -194,16 +215,25 @@ function extractClaudeMessages() {
         '.chat-view',
         'div[class*="chat-view"]',
         'div[class*="conversation"]',
+        '.mx-auto.flex.max-w-\\[--thread-content-max-width\\]', // New Claude UI
+        '.flex.h-full.flex-col', // Another common container
+        'div.overflow-y-auto', // Scrollable container
         'body', // Last resort - search the entire document
     ];
     
     let mainContainer = null;
     for (const selector of containerSelectors) {
-        const element = document.querySelector(selector);
-        if (element) {
-            mainContainer = element;
-            console.log(`Found Claude container using selector: ${selector}`);
-            break;
+        try {
+            const element = document.querySelector(selector);
+            if (element) {
+                mainContainer = element;
+                console.log(`Found Claude container using selector: ${selector}`);
+                break;
+            }
+        } catch (e) {
+            if (verbose) {
+                console.log(`Error with selector ${selector}: ${e.message}`);
+            }
         }
     }
     
@@ -212,132 +242,195 @@ function extractClaudeMessages() {
         return null;
     }
     
+    if (verbose) {
+        console.log("Main container HTML sample:", mainContainer.innerHTML.substring(0, 500) + "...");
+        console.log("Main container children count:", mainContainer.children.length);
+    }
+    
     // Try multiple approaches to find all message blocks in Claude's interface
     let messageBlocks = [];
     
-    // Approach 1: Look for data-test-render-count elements (from your example)
-    const countElements = Array.from(mainContainer.querySelectorAll('[data-test-render-count]'));
-    if (countElements.length > 0) {
-        console.log(`Found ${countElements.length} messages using data-test-render-count`);
-        messageBlocks = countElements;
+    // IMPORTANT: Search WITHIN the main container, not the entire document
+    
+    // Approach 1: Look for elements with data attributes specific to Claude
+    const dataElements = Array.from(mainContainer.querySelectorAll('[data-message-author-role], [data-test-render-count]'));
+    if (dataElements.length > 0) {
+        console.log(`Found ${dataElements.length} messages using data attributes`);
+        messageBlocks = dataElements;
     }
     
-    // Approach 2: Look for whitespace-pre-wrap elements that contain message content
+    // Approach 2: Try Claude's current common message containers
     if (messageBlocks.length === 0) {
-        const contentElements = Array.from(mainContainer.querySelectorAll('.whitespace-pre-wrap.break-words'));
-        if (contentElements.length > 0) {
-            console.log(`Found ${contentElements.length} messages using .whitespace-pre-wrap.break-words`);
-            messageBlocks = contentElements;
-        }
-    }
-    
-    // Approach 3: Look for grid-cols-1 which might contain message blocks
-    if (messageBlocks.length === 0) {
-        const gridElements = Array.from(document.querySelectorAll('.grid-cols-1'));
-        if (gridElements.length > 0) {
-            // Filter to only the elements that seem to be messages
-            const messageGrids = gridElements.filter(el => {
-                return el.textContent.trim().length > 0 && !el.querySelector('script');
-            });
-            
-            if (messageGrids.length > 0) {
-                console.log(`Found ${messageGrids.length} messages using .grid-cols-1`);
-                messageBlocks = messageGrids;
+        const currentSelectors = [
+            'div.min-h-8.text-message', // Current Claude messages
+            'article.text-token-text-primary',  // Another common pattern
+            'div.whitespace-pre-wrap.break-words', // Content within messages
+            'div.markdown.prose', // Markdown content
+            '.font-claude-message'
+        ];
+        
+        for (const selector of currentSelectors) {
+            try {
+                const elements = Array.from(mainContainer.querySelectorAll(selector));
+                if (elements.length > 1) {
+                    console.log(`Found ${elements.length} messages using ${selector}`);
+                    messageBlocks = elements;
+                    break;
+                }
+            } catch (e) {
+                if (verbose) {
+                    console.log(`Error with selector ${selector}: ${e.message}`);
+                }
             }
         }
     }
     
-    // Approach 4: Try to find elements with text content
+    // Approach 3: Try to find specific Claude UI structures (updated April 2025)
+    if (messageBlocks.length === 0) {
+        // Look for specific patterns in the current Claude UI
+        const patterns = [
+            '.flex.flex-col.gap-1.empty\\:hidden', // Message content container
+            '.text-base.my-auto', // Common wrapper
+            '.mx-auto.flex.max-w-\\[--thread-content-max-width\\]', // Thread container
+            'div.group\\/conversation-turn', // Conversation turn
+            '.whitespace-pre-wrap', // Pre-wrapped text
+            'div[data-is-streaming] > div', // Streaming content
+            'div.flex.max-w-full.flex-col', // Message container
+            'div.prose', // Prose content
+            'div.markdown', // Markdown content
+            'div.min-h-full > div > p' // Paragraphs in message containers
+        ];
+        
+        for (const pattern of patterns) {
+            try {
+                const elements = Array.from(mainContainer.querySelectorAll(pattern));
+                if (elements.length > 1) {
+                    console.log(`Found ${elements.length} messages using pattern ${pattern}`);
+                    messageBlocks = elements;
+                    break;
+                }
+            } catch (e) {
+                // Some complex selectors might fail, continue to next one
+                if (verbose) {
+                    console.log(`Selector error for ${pattern}: ${e.message}`);
+                }
+            }
+        }
+    }
+    
+    // Approach 4: Look for grid-cols-1 which might contain message blocks
+    if (messageBlocks.length === 0) {
+        try {
+            const gridElements = Array.from(mainContainer.querySelectorAll('.grid-cols-1'));
+            if (gridElements.length > 0) {
+                // Filter to only the elements that seem to be messages
+                const messageGrids = gridElements.filter(el => {
+                    return el.textContent.trim().length > 0 && !el.querySelector('script');
+                });
+                
+                if (messageGrids.length > 0) {
+                    console.log(`Found ${messageGrids.length} messages using .grid-cols-1`);
+                    messageBlocks = messageGrids;
+                }
+            }
+        } catch (e) {
+            if (verbose) {
+                console.log(`Error in grid elements search: ${e.message}`);
+            }
+        }
+    }
+    
+    // Approach 5: Try general message patterns
     if (messageBlocks.length === 0) {
         // Common Claude UI patterns for messages
         const messagePatterns = [
-            '.font-claude-message',
-            '.whitespace-normal.break-words',
-            'p.whitespace-pre-wrap',
-            'div.min-h-full > div > p',
-            '[style*="whitespace"][style*="pre-wrap"]',
-            'div[data-is-streaming] > div',
-            'div > .text-xl',
-            // Additional selectors for various Claude UI versions
             'div[class*="message"]',
             'div[class*="chat-message"]',
             'div[class*="chat-turn"]',
             'div[class*="message-content"]',
             'div[class*="bubble"]',
             'div[class*="message-bubble"]',
-            'div.markdown',
-            'div.prose',
-            'div > div > p',
-            // More generic selectors as fallbacks
-            'p',
-            'div > p'
+            'div > div > p'
         ];
         
         // Try each pattern
         for (const pattern of messagePatterns) {
-            const elements = Array.from(document.querySelectorAll(pattern));
-            if (elements.length > 1) { // Need at least 2 messages for a conversation
-                console.log(`Found ${elements.length} messages using ${pattern}`);
-                messageBlocks = elements;
-                break;
+            try {
+                const elements = Array.from(mainContainer.querySelectorAll(pattern));
+                if (elements.length > 1) { // Need at least 2 messages for a conversation
+                    console.log(`Found ${elements.length} messages using ${pattern}`);
+                    messageBlocks = elements;
+                    break;
+                }
+            } catch (e) {
+                if (verbose) {
+                    console.log(`Error with selector ${pattern}: ${e.message}`);
+                }
             }
         }
     }
     
-    // Approach 5: Look for div elements with specific depths and text content
+    // Last resort: look for paragraphs with substantial text
     if (messageBlocks.length === 0) {
-        // Find all divs with text content
-        const allDivs = Array.from(document.querySelectorAll('div'));
-        const textDivs = allDivs.filter(div => {
-            // Check if div has direct text content and reasonable length
-            const hasText = Array.from(div.childNodes).some(node => 
-                node.nodeType === Node.TEXT_NODE && node.textContent.trim().length > 20
-            );
-            
-            // Or contains paragraphs
-            const hasParagraphs = div.querySelectorAll('p').length > 0;
-            
-            return (hasText || hasParagraphs) && !div.querySelector('script');
+        // Find any paragraph or div with substantial text directly inside main container
+        const textElements = Array.from(mainContainer.querySelectorAll('p, div > p, div.whitespace-pre-wrap'));
+        
+        // Filter to elements with meaningful content
+        const contentElements = textElements.filter(el => {
+            return el.textContent && el.textContent.trim().length > 15 && 
+                   !el.closest('header') && !el.closest('footer') &&
+                   !el.closest('nav');
         });
         
-        if (textDivs.length > 1) {
-            console.log(`Found ${textDivs.length} potential message divs with text content`);
-            messageBlocks = textDivs;
+        if (contentElements.length > 1) {
+            console.log(`Found ${contentElements.length} text elements with content`);
+            messageBlocks = contentElements;
         }
     }
     
+    // Last resort: Manual DOM walk to find message-like structures
     if (messageBlocks.length === 0) {
-        console.error('Could not find Claude messages with specific selectors, trying generic approach');
+        console.log("Attempting manual DOM walk as last resort");
+        const allDivs = mainContainer.querySelectorAll('div');
+        const candidates = [];
         
-        // Last ditch effort: Find any div with substantial text content
-        // We're going to extract all divs with at least 20 characters of text
-        // and sort them by length (assuming longer ones are more likely to be messages)
-        const allElements = document.querySelectorAll('div, p');
-        const textElements = Array.from(allElements).filter(el => {
-            // Must have reasonable text content
-            return el.textContent && el.textContent.trim().length > 20 &&
-                // But not be a common UI element 
-                !el.querySelector('script') &&
-                !el.querySelector('style') &&
-                !el.classList.contains('nav') &&
-                !el.classList.contains('header') &&
-                !el.classList.contains('footer') &&
-                // And not have too many child elements (suggesting it's a container, not a message)
-                el.children.length < 10;
+        Array.from(allDivs).forEach(div => {
+            // Look for divs with meaningful text, paragraphs, and not too many children
+            const text = div.textContent?.trim() || '';
+            const hasParagraphs = div.querySelectorAll('p').length > 0;
+            const childCount = div.children.length;
+            
+            if ((text.length > 20 || hasParagraphs) && childCount < 15 && childCount > 0) {
+                candidates.push(div);
+            }
         });
         
-        // Sort by text length (descending) - longer elements are more likely to be messages
-        textElements.sort((a, b) => b.textContent.trim().length - a.textContent.trim().length);
+        // Sort by text length, assuming longer text is more likely to be messages
+        candidates.sort((a, b) => b.textContent.length - a.textContent.length);
         
-        // Take top elements (max 20)
-        const maxElements = Math.min(20, textElements.length);
-        if (maxElements >= 2) {
-            console.log(`Found ${maxElements} potential Claude messages using generic text extraction`);
-            messageBlocks = textElements.slice(0, maxElements);
-        } else {
-            console.error('Could not find any Claude messages. The page structure might have changed.');
-            return null;
+        if (candidates.length > 1) {
+            console.log(`Found ${candidates.length} potential message divs via manual DOM walk`);
+            messageBlocks = candidates.slice(0, 20); // Take top 20 candidates
         }
+    }
+    
+    // If still no messages found, log detailed debug info
+    if (messageBlocks.length === 0) {
+        console.error('Claude message detection failed. Detailed DOM structure:');
+        
+        // Log first few divs in the container to understand structure
+        const divs = mainContainer.querySelectorAll('div');
+        console.log(`Container has ${divs.length} divs.`);
+        
+        if (verbose) {
+            Array.from(divs).slice(0, 5).forEach((div, i) => {
+                console.log(`Div ${i} classes:`, div.className);
+                console.log(`Div ${i} children:`, div.children.length);
+                console.log(`Div ${i} text sample:`, div.textContent.substring(0, 100) + "...");
+            });
+        }
+        
+        return null;
     }
     
     console.log(`Found ${messageBlocks.length} Claude message blocks`);
